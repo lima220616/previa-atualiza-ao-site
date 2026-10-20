@@ -937,6 +937,14 @@ body.wzp-on{overflow:hidden}body.wzp-on .sp,body.wzp-on .wa{display:none!importa
 .pv-c .vplay-b span{width:64px;height:64px;background:rgba(255,255,255,.92);box-shadow:0 6px 18px rgba(0,0,0,.25)}
 .pv-c .vplay-b svg{width:28px;height:28px;fill:var(--rosa);margin-left:3px}
 .pv-nav{display:flex;justify-content:center;gap:10px;margin-top:8px}
+
+/* 20/10, pedido da usuária: todo visto (✓) do site fica no verde das páginas de produto (#0B8139), menos os
+   banners do topo (#bnr), que ficam como estão porque viram fotos depois. */
+.card li svg.i,.cmvip li svg{color:#0B8139}
+.vo:has(input:checked)::after{background:#0B8139}
+.wz-ok .ib{color:#0B8139;background:#CDEFDB}
+.ben-c .bi:has(use[href="#i-check"]){background:#E7F7EE}
+.ben-c .bi:has(use[href="#i-check"]) svg{color:#0B8139}
 </style>
 </head>
 <body>
