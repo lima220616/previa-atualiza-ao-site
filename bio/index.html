@@ -57,6 +57,8 @@ h2 { font-family: var(--serif); font-size: 1.3rem; margin: 30px 0 12px; text-ali
 .promo-botao { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 12px; border-radius: 8px; background: #25D366;
   color: #fff; font-weight: 700; text-decoration: none; }
 .promo-botao .ic { width: 26px; height: 26px; }
+button.promo-botao { width: 100%; border: 0; font: inherit; font-weight: 700; cursor: pointer; }
+.promo-zap { display: block; margin-top: 10px; color: #fff; text-align: center; font-size: .8rem; }
 .promo.acabou { display: none; }
 .cupom { margin: 12px 0 0; padding: 10px 14px; border: 1.5px dashed var(--rosa); border-radius: 10px; display: flex; gap: 10px; align-items: center;
   font-size: .85rem; }
@@ -115,9 +117,9 @@ details p { margin: 0 4px 12px; color: var(--texto2); font-size: .92rem; }
     <div class="contador" role="timer" aria-label="Tempo até o fim da promoção">
       <span><b data-d>00</b>dias</span><span><b data-h>00</b>horas</span><span><b data-m>00</b>min</span><span><b data-s>00</b>seg</span>
     </div>
-    <p class="promo-condicao">Até 30% OFF com cupom de desconto + pagamento no Pix. Desconto varia por produto. Cupom válido para os Kits Completos e produtos avulsos.</p>
-    <a class="promo-botao" href="https://wa.me/5564993431755?text=Ol%C3%A1%21%20Quero%20o%20meu%20cupom%20de%20Final%20de%20Ano%20da%20Brumar." target="_blank" rel="noopener">
-      <span class="ic marca" style="background:transparent"><svg aria-hidden="true" fill="#FFFFFF" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg></span>Pedir meu cupom no WhatsApp</a>
+    <p class="promo-condicao">Use o cupom FIMDEANOBRUMAR no pagamento: 15% OFF nos Kits Completos e produtos avulsos. Somando o desconto do kit e 5% no Pix, chega a até 30% OFF em relação ao preço dos produtos separados. Um cupom por pedido.</p>
+    <button type="button" class="promo-botao" data-copiar="FIMDEANOBRUMAR"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.4"/></svg></span>Copiar o cupom FIMDEANOBRUMAR</button>
+    <a class="promo-zap" href="https://wa.me/5564993431755?text=Ol%C3%A1%21%20Tenho%20uma%20d%C3%BAvida%20sobre%20o%20cupom%20de%20Final%20de%20Ano%20da%20Brumar." target="_blank" rel="noopener">Dúvidas? Fale com a gente no WhatsApp</a>
   </section>
   <p class="cupom"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.4"/></svg></span><span>Primeira compra? Use o cupom <code>PRIMEIRACOMPRA</code> e ganhe 10% OFF.</span></p>
 
@@ -163,6 +165,16 @@ details p { margin: 0 4px 12px; color: var(--texto2); font-size: .92rem; }
   }
   tick(); setInterval(tick, 1000);
 })();
+/* Botão que copia o cupom (se o navegador não deixar copiar, mostra o código no botão) */
+document.querySelectorAll("[data-copiar]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var c = b.getAttribute("data-copiar"), antes = b.innerHTML;
+    function mostra(t) { b.textContent = t; setTimeout(function () { b.innerHTML = antes; }, 2500); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(c).then(function () { mostra("Cupom copiado!"); }, function () { mostra("Cupom: " + c); });
+    } else { mostra("Cupom: " + c); }
+  });
+});
 </script>
 </body>
 </html>
