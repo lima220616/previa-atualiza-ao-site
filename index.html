@@ -1990,14 +1990,7 @@ function parc12(p){return p*JUROS_MES/(1-Math.pow(1+JUROS_MES,-12))}
 function parcTxt(p){return 'ou 3x de '+brl(p/3)+' sem juros'}
 function notaTxt(p){return 'Ou em até 12x no cartão (de 4x a 12x, com juros).'}
 var TRUCK='<svg class="i" aria-hidden="true"><use href="#i-truck"/></svg>';
-function glossInfo(L,p){if(!p||/^Combo|Finaliza/.test(L))return null;
- if(/^Kit Profissional/.test(L))return [p,30,'O kit sai a cerca de '];
- if(/^Kit (Completo|Gloss Branco).*1 L/.test(L))return [p,10,'O kit sai a cerca de '];
- if(/^Kit Completo.*300/.test(L))return [p,3,'O kit sai a cerca de '];
- if(/^Gloss .*1 L/.test(L))return [p,10,'Sai a cerca de '];
- if(/^Gloss .*300/.test(L))return [p,3,'Sai a cerca de '];
- return null}
-function aplic(L,p){var g=glossInfo(L||'',p);if(!g)return '';return g[2]+brl(g[0]/g[1])+' por aplicação'}
+function aplic(L,p){return ''}
 function fg(sm){var e=document.createElement('span');e.className='fg'+(sm?' sm':'');e.innerHTML=TRUCK+'Frete grátis';return e}
 var BRINDE=300,GIFT='<svg class="i" aria-hidden="true"><use href="#i-gift"/></svg>';
 function gb(sm){var e=document.createElement('span');e.className='fg gb'+(sm?' sm':'');e.innerHTML=GIFT+(sm?'Brinde garantido':'Brinde garantido: Cristal Shine Perfume Capilar');return e}
