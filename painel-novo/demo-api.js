@@ -60,18 +60,18 @@
 
   function conteudo() {
     const grupos = ESQUEMA.grupos.map((g) => ({
-      id: g.id, titulo: g.titulo, descricao: g.descricao || "",
+      id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "",
       campos: g.campos.flatMap((modelo, pos) => {
         const p = modelo.split("."); const i = p.indexOf("*");
-        const casos = i < 0 ? [{ caminho: modelo, item: "", ordem: -1 }]
+        const casos = i < 0 ? [{ caminho: modelo, item: "", chave: "", ordem: -1 }]
           : Object.keys(ler(E.site[arq(modelo)], p.slice(1, i)) || {}).map((k, ordem) => {
             const it = ler(E.site[arq(modelo)], [...p.slice(1, i), k]);
-            return { caminho: [...p.slice(0, i), k, ...p.slice(i + 1)].join("."), item: (it && it.nome) || k, ordem };
+            return { caminho: [...p.slice(0, i), k, ...p.slice(i + 1)].join("."), item: (it && it.nome) || k, chave: k, ordem };
           });
-        return casos.map(({ caminho, item, ordem }) => {
+        return casos.map(({ caminho, item, chave, ordem }) => {
           const r = ESQUEMA.campos[modelo];
           const rasc = E.rascunho[caminho];
-          return { caminho, tipo: r.tipo, max: r.max, opcoes: r.opcoes, rotulos: r.rotulos, ajuda: r.ajuda,
+          return { caminho, tipo: r.tipo, max: r.max, opcoes: r.opcoes, rotulos: r.rotulos, ajuda: r.ajuda, item: chave, itemNome: item, rotulo: r.nome,
             nome: item ? `${r.nome} · ${item}` : r.nome, noSite: ler(E.site[arq(caminho)], lugar(caminho)),
             ...(rasc && { rascunho: { valor: rasc.valor, por: rasc.por, em: rasc.em } }), _o: [ordem, pos] };
         });

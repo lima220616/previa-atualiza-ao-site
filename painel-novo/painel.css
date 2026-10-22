@@ -152,6 +152,41 @@ img { max-width: 100%; display: block; }
   .previa-iframe { border: 0; background: #fff; transform-origin: 0 0; position: absolute; top: 0; left: 0; }
 }
 
+/* listas no estilo do vídeo de exemplo (22/10) */
+.titulo-lista { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.titulo-lista h1 { margin: 0; }
+.tabela-rolagem { overflow-x: auto; }
+.tabela { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.tabela th { text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--texto2); padding: 8px; border-bottom: 2px solid var(--linha); }
+.tabela td { padding: 10px 8px; border-bottom: 1px solid var(--linha); vertical-align: middle; }
+.tabela tr:hover td { background: var(--nevoa); }
+.tabela .acoes { white-space: nowrap; text-align: right; }
+.acao { background: var(--rosa-cl); color: var(--vinho); border: 0; border-radius: var(--raio-b); padding: 6px 10px; font-weight: 600; cursor: pointer; margin-left: 4px; }
+.acao.perigo { background: #FDECEC; color: var(--vermelho); }
+.etiqueta.laranja { background: #FFF4E5; color: var(--laranja); }
+
+/* menu lateral no celular: abre por cima da tela com ☰ */
+.abrir-menu, .fundo-menu { display: none; }
+@media (max-width: 759px) {
+  .abrir-menu { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 38px; border: 0; border-radius: var(--raio-b);
+    background: var(--vinho); color: #fff; font-size: 1.2rem; cursor: pointer; flex: none; }
+  .lateral { display: flex; flex-direction: column; gap: 2px; position: fixed; z-index: 50; top: 0; left: 0; bottom: 0; width: 260px; max-width: 82vw;
+    background: var(--vinho); color: #fff; padding: 12px 10px; overflow-y: auto; transform: translateX(-105%); transition: transform .2s; }
+  .lateral.aberto { transform: none; box-shadow: 4px 0 24px rgba(0,0,0,.25); }
+  .lateral .lateral-recolher { display: none; }
+  .lateral-topo { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .lateral-logo { height: 34px; background: #fff; border-radius: var(--raio-b); padding: 3px 6px; }
+  .lateral-secao { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; opacity: .7; margin: 12px 8px 4px; }
+  .lateral-item { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; color: #fff; text-align: left; padding: 11px 10px; border-radius: var(--raio-b); font-size: .95rem; }
+  .lateral-item.ativo { background: #fff; color: var(--vinho); font-weight: 700; }
+  .lateral-icone { width: 22px; text-align: center; flex: none; }
+  .lateral-fim { margin-top: auto; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.15); }
+  .fundo-menu { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.35); display: none; }
+  .fundo-menu.aberto { display: block; }
+  .tabela .acoes { white-space: normal; }
+  .acao { margin: 3px 0 3px 4px; }
+}
+
 .faixa-demo { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; padding: 6px 12px;
   background: #FFF4C2; color: #4A3B00; font-size: .8rem; text-align: center; }
 .faixa-demo button { background: none; border: 0; text-decoration: underline; cursor: pointer; font-size: .8rem; color: inherit; }

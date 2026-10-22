@@ -75,6 +75,8 @@ function itemLateral(icone, titulo, rota, acao) {
 
 function marcarAtivo() {
   if (!estrutura) return;
+  estrutura.menu.classList.remove("aberto");
+  estrutura.fundo?.classList.remove("aberto");
   const atual = decodeURIComponent(location.hash.slice(1));
   for (const b of estrutura.menu.querySelectorAll(".lateral-item")) b.classList.toggle("ativo", b.dataset.rota === atual);
 }
@@ -119,8 +121,10 @@ function garantirEstrutura() {
     eu.papel !== "admin" && itemLateral("🔑", "Minha senha", "senha"),
     h("div", { class: "lateral-fim" }, itemLateral("🚪", "Sair", null, sair)));
   const meio = h("div", { class: "meio" });
-  const raiz = h("div", { class: "grade" }, menu, meio);
-  estrutura = { raiz, menu, meio, iframe: null, moldura: null, botoesModo: [] };
+  // No celular, o menu abre por cima da tela (☰ no topo) e fecha tocando fora ou escolhendo uma tela.
+  const fundo = h("div", { class: "fundo-menu", onclick: () => { menu.classList.remove("aberto"); fundo.classList.remove("aberto"); } });
+  const raiz = h("div", { class: "grade" }, menu, fundo, meio);
+  estrutura = { raiz, menu, fundo, meio, iframe: null, moldura: null, botoesModo: [] };
   // A prévia só é montada em tela larga (no celular ela gastaria leituras à toa).
   if (window.matchMedia(TELA_LARGA).matches) {
     const iframe = h("iframe", { class: "previa-iframe", src: "previa/", title: "Prévia do site" });
@@ -140,7 +144,7 @@ function garantirEstrutura() {
   setTimeout(ajustarPrevia, 0);
   pedir("conteudo").then((r) => {
     if (r.status !== 200) return;
-    gruposMenu.replaceChildren(...r.dados.grupos.map((g) => itemLateral("✏️", g.titulo, `conteudo/${g.id}`)));
+    gruposMenu.replaceChildren(...r.dados.grupos.map((g) => itemLateral(g.icone || "✏️", g.titulo, `conteudo/${g.id}`)));
     marcarAtivo();
   });
   return estrutura;
@@ -151,8 +155,12 @@ async function casca(...conteudo) {
   const medidor = h("div", { class: "medidor" });
   const sino = h("button", { class: "sino", type: "button", "aria-label": "Avisos", onclick: () => ir("avisos") }, "Avisos");
   const faixa = h("div");
+  const abrirMenu = h("button", { class: "abrir-menu", type: "button", "aria-label": "Abrir o menu", onclick: () => {
+    estrutura?.menu.classList.add("aberto"); estrutura?.menu.classList.remove("recolhido"); estrutura?.fundo.classList.add("aberto");
+  } }, "☰");
   const topo = h("header", { class: "topo" },
     h("div", { class: "topo-linha" },
+      abrirMenu,
       h("img", { class: "topo-logo", src: "logo.png", alt: "Brumar Cosméticos" }),
       sino,
       h("div", { class: "quem" }, h("strong", { text: eu.nome }), NOMES_PAPEL[eu.papel])),
@@ -210,7 +218,10 @@ async function rotear() {
   const telas = { publicar: telaPublicar, enviar: telaEnviar, aprovacoes: telaAprovacoes, historico: telaHistorico,
     acessos: telaAcessos, senha: telaSenha, avisos: telaAvisos, medidor: telaMedidor };
   if (hash === "conteudo") return telaConteudo();
-  if (hash.startsWith("conteudo/")) return telaGrupo(hash.slice(9));
+  if (hash.startsWith("conteudo/")) {
+    const [id, ...resto] = hash.slice(9).split("/");
+    return telaGrupo(id, resto.join("/"));
+  }
   return (telas[hash] || telaInicio)();
 }
 
@@ -331,7 +342,7 @@ async function telaConteudo() {
   await casca(voltar(), h("h1", { text: "Conteúdo do site" }),
     h("div", { class: "menu" }, grupos.map((g) => {
       const salvos = g.campos.filter((c) => c.rascunho).length;
-      return itemMenu("✏️", g.titulo, salvos ? `${salvos} mudança(s) salva(s) · ${g.descricao}` : g.descricao, `conteudo/${g.id}`);
+      return itemMenu(g.icone || "✏️", g.titulo, salvos ? `${salvos} mudança(s) salva(s) · ${g.descricao}` : g.descricao, `conteudo/${g.id}`);
     })));
 }
 
@@ -578,13 +589,127 @@ function entradaDoCampo(c, valor) {
   return { el: entrada, ler: () => entrada.value, foco: entrada, texto: true };
 }
 
-async function telaGrupo(id) {
+// ---------- listas (pedido de 22/10, como no vídeo de exemplo) ----------
+// Campanhas: lista com "+ Adicionar" no canto e Editar/Excluir em cada linha. Produtos e vídeos: lista dos itens,
+// cada um com Editar (não dá para criar nem apagar produto: eles vêm da Yampi e do site).
+const etiqueta = (texto, cor) => h("span", { class: `etiqueta ${cor}`, text: texto });
+const dataCurta = (t) => (t ? `${t.slice(8, 10)}/${t.slice(5, 7)} às ${t.slice(11, 13)}h${t.slice(14, 16)}` : "sem data");
+function situacaoDaCampanha(x) {
+  if (!x.termina) return etiqueta("Falta a data", "laranja");
+  if (new Date(`${x.termina}:00-03:00`) < new Date()) return etiqueta("Terminou", "cinza");
+  if (x.ligada === false) return etiqueta("Desligada", "cinza");
+  return etiqueta("No ar", "verde");
+}
+const cabecalhoLista = (titulo, botao) => h("div", { class: "titulo-lista" }, h("h1", { text: titulo }), botao);
+const tabela = (colunas, linhas) => h("div", { class: "tabela-rolagem" }, h("table", { class: "tabela" },
+  h("thead", {}, h("tr", {}, colunas.map((c) => h("th", { text: c })))), h("tbody", {}, linhas)));
+
+async function salvarCampo(campo, valor, msg) {
+  const res = await pedir("rascunho", { metodo: "POST", corpo: { mudancas: [{ caminho: campo.caminho, valor, antes: campo.noSite }] } });
+  if (res.status !== 200) { mensagem(msg, (res.dados.campos || [])[0]?.erro || res.dados.erro); return false; }
+  atualizarPrevia();
+  return true;
+}
+
+async function telaListaCampanhas(grupo) {
+  const campo = grupo.campos[0];
+  const lista = Array.isArray(campo.rascunho ? campo.rascunho.valor : campo.noSite) ? (campo.rascunho ? campo.rascunho.valor : campo.noSite) : [];
+  const msg = h("p", { class: "erro" });
+  const max = campo.max || 6;
+  const adicionar = h("button", { class: "botao verde", type: "button", onclick: () => {
+    if (lista.length >= max) return mensagem(msg, `No máximo ${max} campanhas ao mesmo tempo.`);
+    ir(`conteudo/${grupo.id}/nova`);
+  } }, "+ Adicionar");
+  const linhas = lista.map((x, i) => {
+    const excluir = h("button", { class: "acao perigo", type: "button", title: "Excluir", "aria-label": `Excluir ${x.titulo}` }, "🗑️ Excluir");
+    excluir.addEventListener("click", async () => {
+      if (!confirm(`Excluir a campanha "${x.titulo}"? Ela sai do site na próxima publicação.`)) return;
+      if (await salvarCampo(campo, lista.filter((_, j) => j !== i), msg)) telaGrupo(grupo.id);
+    });
+    return h("tr", {},
+      h("td", {}, h("strong", { text: x.titulo }), x.texto && h("div", { class: "miudo", text: x.texto })),
+      h("td", { text: dataCurta(x.termina) }),
+      h("td", {}, situacaoDaCampanha(x)),
+      h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", onclick: () => ir(`conteudo/${grupo.id}/${i}`) }, "✏️ Editar"), excluir));
+  });
+  const descartar = campo.rascunho && h("button", { class: "botao claro", type: "button", onclick: async () => {
+    if (!confirm("Desfazer as mudanças salvas nas campanhas e voltar ao que está no site?")) return;
+    await pedir("rascunho", { metodo: "DELETE", corpo: { caminhos: [campo.caminho] } });
+    atualizarPrevia();
+    telaGrupo(grupo.id);
+  } }, "Voltar ao que está no site");
+  await casca(cabecalhoLista(grupo.titulo, adicionar),
+    h("p", { class: "sub", text: "O site mostra uma contagem só: a da campanha ligada que termina primeiro. Quando ela acaba, entra a próxima." }),
+    h("div", { class: "cartao" },
+      lista.length ? tabela(["Campanha", "Termina", "Situação", "Ações"], linhas) : h("p", { text: "Nenhuma campanha cadastrada. Toque em \"+ Adicionar\"." }),
+      campo.rascunho && h("p", { class: "miudo", text: `Mudanças salvas por ${campo.rascunho.por} em ${quando(campo.rascunho.em)}, ainda não publicadas.` }),
+      descartar, msg));
+}
+
+async function telaCampanha(grupo, sub) {
+  const campoLista = grupo.campos[0];
+  const lista = Array.isArray(campoLista.rascunho ? campoLista.rascunho.valor : campoLista.noSite) ? [...(campoLista.rascunho ? campoLista.rascunho.valor : campoLista.noSite)] : [];
+  const nova = sub === "nova";
+  const i = nova ? lista.length : Number(sub);
+  if (!nova && !lista[i]) return ir(`conteudo/${grupo.id}`);
+  const x = nova ? { titulo: "", texto: "", botao: "", termina: "", ligada: true } : lista[i];
+  const titulo = campo("Título", { type: "text", maxlength: 40, value: x.titulo });
+  const texto = campo("Texto (ex.: até 30% OFF com cupom)", { type: "text", maxlength: 60, value: x.texto });
+  const botao = campo("Texto do botão", { type: "text", maxlength: 30, value: x.botao });
+  const fim = campo("Termina em (horário de Brasília) · obrigatório", { type: "datetime-local", value: x.termina }, "A contagem regressiva some sozinha nessa hora.");
+  const ligada = h("input", { type: "checkbox", checked: x.ligada !== false });
+  const msg = h("p", { class: "erro" });
+  const salvar = h("button", { class: "botao cheio", type: "button" }, "Salvar");
+  salvar.addEventListener("click", async () => {
+    mensagem(msg, "");
+    lista[i] = { titulo: titulo.entrada.value.trim(), texto: texto.entrada.value.trim(), botao: botao.entrada.value.trim(), termina: fim.entrada.value, ligada: ligada.checked };
+    ocupado(salvar, true, "Salvando…");
+    const deuCerto = await salvarCampo(campoLista, lista, msg);
+    ocupado(salvar, false);
+    if (deuCerto) ir(`conteudo/${grupo.id}`);
+  });
+  await casca(h("button", { class: "voltar", type: "button", onclick: () => ir(`conteudo/${grupo.id}`) }, `‹ ${grupo.titulo}`),
+    h("h1", { text: nova ? "Nova campanha" : `Editar: ${x.titulo}` }),
+    h("div", { class: "cartao" }, titulo.el, texto.el, botao.el, fim.el,
+      h("label", { class: "escolha" }, ligada, h("span", { text: "Ligada no site" })), msg, salvar,
+      h("p", { class: "ajuda", text: "Só anuncie desconto que já existe na Yampi, com a mesma data de término. Salvar não publica." })));
+}
+
+async function telaListaItens(grupo) {
+  const itens = [];
+  for (const c of grupo.campos) {
+    let it = itens.find((x) => x.chave === c.item);
+    if (!it) itens.push(it = { chave: c.item, nome: c.itemNome, campos: [] });
+    it.campos.push(c);
+  }
+  const linhas = itens.map((it) => {
+    const valor = (c) => (c.rascunho ? c.rascunho.valor : c.noSite);
+    const liga = it.campos.find((c) => c.tipo === "ligado");
+    const videos = it.campos.find((c) => c.tipo === "videos");
+    const situacao = liga ? etiqueta(`${liga.rotulo}: ${valor(liga) === false ? "Não" : "Sim"}`, valor(liga) === false ? "cinza" : "verde")
+      : videos ? etiqueta(`${(valor(videos) || []).length} vídeo(s)`, (valor(videos) || []).length ? "verde" : "cinza") : "";
+    const salvos = it.campos.filter((c) => c.rascunho).length;
+    return h("tr", {},
+      h("td", {}, h("strong", { text: it.nome }), salvos > 0 && h("div", { class: "miudo", text: `${salvos} mudança(s) salva(s), ainda não publicada(s)` })),
+      h("td", {}, situacao),
+      h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", onclick: () => ir(`conteudo/${grupo.id}/${it.chave}`) }, "✏️ Editar")));
+  });
+  await casca(cabecalhoLista(grupo.titulo), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }),
+    h("div", { class: "cartao" }, tabela(["Nome", "Situação", "Ações"], linhas)));
+}
+
+async function telaGrupo(id, sub = "") {
   const r = conteudoCache ? { status: 200, dados: conteudoCache } : await carregarConteudo();
   conteudoCache = null; // da próxima vez, lê de novo
   const grupo = r.status === 200 && r.dados.grupos.find((g) => g.id === id);
   if (!grupo) return ir("conteudo");
+  if (grupo.campos.length === 1 && grupo.campos[0].tipo === "campanhas") return sub ? telaCampanha(grupo, sub) : telaListaCampanhas(grupo);
+  const porItem = grupo.campos.length > 0 && grupo.campos.every((c) => c.item);
+  if (porItem && !sub) return telaListaItens(grupo);
+  const doGrupo = porItem ? grupo.campos.filter((c) => c.item === sub) : grupo.campos;
+  if (!doGrupo.length) return ir(`conteudo/${id}`);
   const msg = h("p", { class: "erro" });
-  const campos = grupo.campos.map((c) => {
+  const campos = doGrupo.map((c) => {
     const valorAtual = c.rascunho ? c.rascunho.valor : c.noSite;
     const entrada = entradaDoCampo(c, valorAtual);
     const erroCampo = h("p", { class: "erro" });
@@ -607,12 +732,12 @@ async function telaGrupo(id) {
         const res = await pedir("rascunho", { metodo: "DELETE", corpo: { caminhos: [c.caminho] } });
         if (res.status !== 200) { ocupado(descartar, false); return mensagem(erroCampo, res.dados.erro); }
         esquecer(c.caminho);
-        telaGrupo(id);
+        telaGrupo(id, sub);
         atualizarPrevia();
       });
       notas.append(h("p", { class: "miudo", text: `Salvo por ${c.rascunho.por} em ${quando(c.rascunho.em)}, ainda não publicado. No site: ${mostrar(c.noSite)}` }), descartar);
     }
-    const bloco = h("div", { class: "campo" }, h("span", { class: "rotulo", text: c.nome }), entrada.el, contador, c.ajuda && h("p", { class: "ajuda", text: c.ajuda }), notas, erroCampo);
+    const bloco = h("div", { class: "campo" }, h("span", { class: "rotulo", text: porItem ? c.rotulo : c.nome }), entrada.el, contador, c.ajuda && h("p", { class: "ajuda", text: c.ajuda }), notas, erroCampo);
     return { c, entrada, valorAtual, erroCampo, bloco };
   });
 
@@ -636,12 +761,13 @@ async function telaGrupo(id) {
       return mensagem(msg, res.dados.erro);
     }
     for (const m of mudancas) esquecer(m.caminho);
-    await telaGrupo(id);
+    await telaGrupo(id, sub);
     atualizarPrevia();
   });
 
-  await casca(h("button", { class: "voltar", type: "button", onclick: () => ir("conteudo") }, "‹ Conteúdo do site"),
-    h("h1", { text: grupo.titulo }), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }),
+  await casca(porItem ? h("button", { class: "voltar", type: "button", onclick: () => ir(`conteudo/${id}`) }, `‹ ${grupo.titulo}`)
+    : h("button", { class: "voltar", type: "button", onclick: () => ir("conteudo") }, "‹ Conteúdo do site"),
+    h("h1", { text: porItem ? doGrupo[0].itemNome : grupo.titulo }), !porItem && grupo.descricao && h("p", { class: "sub", text: grupo.descricao }),
     h("div", { class: "cartao" }, campos.map((x) => x.bloco), msg, salvar,
       h("p", { class: "ajuda", text: "Salvar não publica nem gasta crédito. Para ir ao site, use Publicar (ou Enviar para aprovação)." })));
 }
