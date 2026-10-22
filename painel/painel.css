@@ -181,3 +181,8 @@ img { max-width: 100%; display: block; }
 @media (max-width: 440px) { /* no celular da Bruna, a moldura encolhe para caber na tela */
   .celular-moldura { width: 320px; height: 625px; border-width: 10px; }
   .celular-vitrine { width: 375px; height: 756px; transform: scale(0.8); transform-origin: 0 0; } }
+
+/* campanhas (várias ao mesmo tempo, 22/10) */
+.linha-campanha { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.linha-campanha h3 { margin: 0; }
+.etiqueta.verde { background: #E7F7EE; color: var(--verde); }

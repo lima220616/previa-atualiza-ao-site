@@ -4,7 +4,7 @@
 (function () {
   "use strict";
 
-  var CHAVE = "painel-brumar-previa-v10";
+  var CHAVE = "painel-brumar-previa-v11";
   var COTA = 25;              // plano Personal (1.000 créditos): reserva ~600 para visitas, vídeos e robôs; ~25 publicações
   var RENOVA = "21/11";
   var PESSOAS_INICIAIS = [
@@ -85,6 +85,12 @@
   function reais(v) { return v === null || v === undefined || v === "" ? "" : "R$ " + Number(v).toFixed(2).replace(".", ","); }
   function agora() { var d = new Date(); function z(n) { return (n < 10 ? "0" : "") + n; } return z(d.getDate()) + "/" + z(d.getMonth() + 1) + " " + z(d.getHours()) + ":" + z(d.getMinutes()); }
 
+  // Campanhas: várias ao mesmo tempo (pedido de 22/10). Cada uma com data de término obrigatória.
+  function dataBR(iso) { var m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/); return m ? m[3] + "/" + m[2] + " às " + m[4] + "h" + m[5] : "sem data"; }
+  function resumoCampanhas(lista) {
+    return (lista || []).map(function (c) { return (c.titulo || "(sem título)") + " (até " + dataBR(c.termina) + (c.ligada === false ? ", desligada" : "") + ")"; });
+  }
+
   // ------------------------------------------------------------------ o que mudou (rascunho = trabalho diferente do publicado)
   function mudancas(pub, tra) {
     var lista = [];
@@ -101,7 +107,7 @@
     cmp("Faixa do topo", m1.faixa_anuncios, m2.faixa_anuncios);
     cmp("Horário de atendimento", m1.atendimento, m2.atendimento);
     cmp("Mensagem automática do WhatsApp", m1.whatsapp_mensagem, m2.whatsapp_mensagem);
-    cmp("Campanha", m1.campanha, m2.campanha);
+    cmp("Campanhas", resumoCampanhas(m1.campanhas), resumoCampanhas(m2.campanhas));
     pub.secoes.forEach(function (s, i) { cmp("Seção “" + s.nome + "”", s.ligada, tra.secoes[i].ligada); });
     pub.familias.forEach(function (f, i) {
       var g = tra.familias[i];
@@ -246,19 +252,46 @@
         }))];
     }
     if (tela.sub === "campanha") {
-      var c = T.marca.campanha;
-      var tit = campoTexto("Título", c.titulo, 40), tx = campoTexto("Texto (ex.: até 30% OFF com cupom)", c.texto, 60);
-      var bt = campoTexto("Texto do botão", c.botao, 30);
-      var fim = h("input", { type: "datetime-local", id: "fim-camp" }); fim.value = (c.termina || "").slice(0, 16);
-      return [voltar(function () { tela.sub = null; }), h("div", { class: "cartao" }, h("h2", { text: "Campanha" }),
-        h("p", { class: "sub", text: "A faixa com contagem regressiva some sozinha na data de término. Só anuncie desconto que já existe na Yampi." }),
-        tit.el, tx.el, bt.el,
-        h("div", { class: "campo" }, h("label", { for: "fim-camp", text: "Termina em (horário de Brasília)" }), fim,
-          h("div", { class: "ajuda", text: "Obrigatório. Sem data, a campanha não é salva." })),
+      // Várias campanhas ao mesmo tempo: a lista é copiada para a tela e só vai para o rascunho ao tocar em Salvar.
+      if (!tela.campanhas) tela.campanhas = copia(T.marca.campanhas || []);
+      var MAX_CAMPANHAS = 6;
+      var formularios = tela.campanhas.map(function (c, i) {
+        var tit = campoTexto("Título", c.titulo, 40), tx = campoTexto("Texto (ex.: até 30% OFF com cupom)", c.texto, 60);
+        var bt = campoTexto("Texto do botão", c.botao, 30);
+        var idFim = "fim-camp-" + i;
+        var fim = h("input", { type: "datetime-local", id: idFim }); fim.value = (c.termina || "").slice(0, 16);
+        var ligada = h("input", { type: "checkbox", checked: c.ligada !== false });
+        var terminou = c.termina && new Date(c.termina) < new Date();
+        var ler = function () { c.titulo = tit.input.value.trim(); c.texto = tx.input.value.trim(); c.botao = bt.input.value.trim(); c.termina = fim.value ? fim.value + ":00-03:00" : ""; c.ligada = ligada.checked; };
+        [tit.input, tx.input, bt.input, fim, ligada].forEach(function (el) { el.addEventListener("change", ler); el.addEventListener("input", ler); });
+        return h("div", { class: "cartao" },
+          h("div", { class: "linha-campanha" }, h("h3", { text: c.titulo || "Campanha nova" }),
+            h("span", { class: "etiqueta " + (terminou ? "cinza" : c.ligada === false ? "cinza" : "verde"), text: terminou ? "Terminou" : c.ligada === false ? "Desligada" : c.termina ? "No ar até " + dataBR(c.termina) : "Falta a data" })),
+          tit.el, tx.el, bt.el,
+          h("div", { class: "campo" }, h("label", { for: idFim, text: "Termina em (horário de Brasília)" }), fim,
+            h("div", { class: "ajuda", text: "Obrigatório. A contagem regressiva some sozinha nessa hora." })),
+          h("label", { class: "chave" }, h("span", { text: "Ligada no site" }), ligada),
+          h("button", { class: "botao perigo", onclick: function () {
+            if (!confirm("Tirar a campanha “" + (c.titulo || "nova") + "”?")) return;
+            tela.campanhas.splice(i, 1); desenhar();
+          } }, "Tirar esta campanha"));
+      });
+      var adicionar = h("button", { class: "botao claro cheio", onclick: function () {
+        if (tela.campanhas.length >= MAX_CAMPANHAS) { aviso("No máximo " + MAX_CAMPANHAS + " campanhas ao mesmo tempo."); return; }
+        tela.campanhas.push({ titulo: "", texto: "", botao: "", termina: "", ligada: true }); desenhar();
+      } }, "+ Adicionar campanha");
+      return [voltar(function () { tela.sub = null; tela.campanhas = null; }), h("h2", { text: "Campanhas" }),
+        h("p", { class: "sub", text: "Pode ter várias ao mesmo tempo. Cada faixa com contagem regressiva some sozinha na data de término. Só anuncie desconto que já existe na Yampi." }),
+        formularios.length ? formularios : h("div", { class: "cartao" }, h("p", { text: "Nenhuma campanha. Toque em “+ Adicionar campanha”." })),
+        adicionar,
         salvarBotao(function () {
-          if (!fim.value) return "Coloque a data de término da campanha.";
-          T.marca.campanha = { titulo: tit.input.value.trim(), texto: tx.input.value.trim(), botao: bt.input.value.trim(), termina: fim.value + ":00-03:00" };
-        }))];
+          for (var i = 0; i < tela.campanhas.length; i++) {
+            var c = tela.campanhas[i];
+            if (!c.titulo) return "Campanha " + (i + 1) + ": coloque o título.";
+            if (!c.termina) return "Campanha “" + c.titulo + "”: coloque a data de término.";
+          }
+          T.marca.campanhas = copia(tela.campanhas); tela.campanhas = null;
+        })];
     }
     if (tela.sub === "secoes") {
       return [voltar(function () { tela.sub = null; }), h("div", { class: "cartao" }, h("h2", { text: "Seções da página inicial" }),
@@ -302,7 +335,7 @@
     }
     var itens = [
       ["✍️", "Textos gerais", "Frase da marca, faixa do topo, atendimento", "textos"],
-      ["🎁", "Campanha", "Promoção com contagem regressiva", "campanha"],
+      ["🎁", "Campanhas", "Promoções com contagem regressiva · várias ao mesmo tempo", "campanha"],
       ["🧴", "Produtos", "Fotos, textos, mostrar ou esconder, preços da Yampi", "produtos"],
       ["\uD83C\uDFAC", "Vídeos", (T.videos || []).length + " vídeos · adicionar, tirar e ordenar", "videos"],
       ["❓", "Dúvidas frequentes", T.faq.length + " perguntas", "faq"],

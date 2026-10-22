@@ -12,12 +12,15 @@ window.DADOS = {
   "atendimento": "Segunda a sexta, das 8h às 17h",
   "whatsapp_mensagem": "Olá! Vim pelo site e quero tirar uma dúvida.",
   "whatsapp": "5564993431755",
-  "campanha": {
-   "titulo": "Final de Ano Brumar",
-   "texto": "Até 30% OFF com cupom",
-   "botao": "Pedir meu cupom",
-   "termina": "2026-10-31T23:59:59-03:00"
-  }
+  "campanhas": [
+   {
+    "titulo": "Final de Ano Brumar",
+    "texto": "Até 30% OFF com cupom",
+    "botao": "Pedir meu cupom",
+    "termina": "2026-11-04T23:59:00-03:00",
+    "ligada": true
+   }
+  ]
  },
  "secoes": [
   {
