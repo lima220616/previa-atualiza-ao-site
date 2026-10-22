@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Painel Brumar · prévia</title>
+<link rel="icon" type="image/png" href="img/logo.png">
+<!-- Só na prévia: na versão publicada as fontes ficam no próprio site (proteção do site bloqueia o Google Fonts). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Montserrat:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="painel.css">
+</head>
+<body>
+<div class="faixa-previa" role="note">
+  <span><strong>Prévia do painel</strong> · nada aqui é publicado no site</span>
+  <label>Ver como
+    <select id="ver-como" aria-label="Ver o painel como">
+      <option value="bruna">Bruna (responsável)</option>
+      <option value="ceo">CEO (responsável)</option>
+      <option value="ana">Ana (funcionária)</option>
+      <option value="teste">Você (administradora)</option>
+    </select>
+  </label>
+  <button type="button" id="recomecar" class="link-mini">Recomeçar prévia</button>
+</div>
+<div id="app"></div>
+<script src="dados-previa.js"></script>
+<script src="painel.js"></script>
+</body>
+</html>
