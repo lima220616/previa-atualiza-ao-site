@@ -1,0 +1,157 @@
+/* Painel Brumar. Cores, fontes e formas do Brand Book (botões retangulares). Pensado primeiro para celular.
+   Fontes guardadas no próprio site: a proteção do painel (CSP) não deixa buscar fora. */
+@font-face { font-family: "Montserrat"; src: url("fontes/montserrat-variavel.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Playfair Display"; src: url("fontes/playfair-display-variavel.woff2") format("woff2"); font-weight: 400 900; font-display: swap; }
+
+:root {
+  --vinho: #8A2E48; --rosa: #B84060; --rosa-cl: #FCE7EB; --nevoa: #FDF0F3; --linha: #F3D3DA;
+  --texto: #4A1E2B; --texto2: #7A3A4C; --verde: #0B8139; --verde-h: #096B2F; --laranja: #C2620A;
+  --vermelho: #D93A3A; --branco: #FFFFFF; --cinza: #8C7A80;
+  --serif: "Playfair Display", Georgia, serif; --sans: "Montserrat", Helvetica, Arial, sans-serif;
+  --raio: 14px; --raio-b: 6px; --sombra: 0 4px 18px rgba(138, 46, 72, .08);
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; font-family: var(--sans); color: var(--texto); background: var(--nevoa); font-size: 15px; line-height: 1.45; }
+h1, h2, h3 { font-family: var(--serif); color: var(--vinho); margin: 0 0 .4em; line-height: 1.2; }
+h1 { font-size: 1.45rem; } h2 { font-size: 1.2rem; } h3 { font-size: 1.02rem; }
+button, input, select, textarea { font: inherit; color: inherit; }
+img { max-width: 100%; display: block; }
+.carregando { text-align: center; padding: 40px 16px; color: var(--texto2); }
+
+/* estrutura */
+.casca { max-width: 720px; margin: 0 auto; padding-bottom: 60px; }
+.topo { position: sticky; top: 0; z-index: 20; background: var(--branco); border-bottom: 1px solid var(--linha); padding: 10px 16px 12px; }
+.topo-linha { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.topo-logo { height: 38px; width: auto; }
+.quem { font-size: .78rem; color: var(--texto2); text-align: right; }
+.quem strong { display: block; color: var(--vinho); font-size: .86rem; }
+.sino { position: relative; background: var(--rosa-cl); border: 0; border-radius: var(--raio-b); padding: 6px 10px; cursor: pointer; font-weight: 700; color: var(--vinho); }
+.sino .bolinha { position: absolute; top: -6px; right: -6px; background: var(--vermelho); color: #fff; border-radius: 99px; font-size: .7rem; min-width: 18px; height: 18px; display: grid; place-items: center; padding: 0 4px; }
+
+/* medidor de publicações */
+.medidor { margin-top: 10px; border-radius: var(--raio-b); padding: 8px 12px; background: var(--nevoa); border: 1px solid var(--linha); }
+.medidor-linha { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: .84rem; }
+.medidor-num { font-weight: 700; }
+.medidor-barra { height: 8px; background: #EBDDE1; border-radius: 99px; overflow: hidden; margin-top: 6px; }
+.medidor-barra span { display: block; height: 100%; border-radius: 99px; transition: width .3s; }
+.medidor-aviso { font-size: .78rem; margin-top: 4px; }
+.medidor.verde .medidor-num { color: var(--verde); } .medidor.verde .medidor-barra span { background: var(--verde); }
+.medidor.laranja { background: #FFF4E5; border-color: #F3C99A; } .medidor.laranja .medidor-num { color: var(--laranja); }
+.medidor.laranja .medidor-barra span { background: var(--laranja); }
+.medidor.vermelho, .medidor.travado { background: #FDECEC; border-color: #F2B8B8; }
+.medidor.vermelho .medidor-num, .medidor.travado .medidor-num { color: var(--vermelho); }
+.medidor.vermelho .medidor-barra span, .medidor.travado .medidor-barra span { background: var(--vermelho); }
+
+/* aviso de rascunho */
+.rascunho { margin: 10px 16px 0; padding: 10px 12px; border-radius: var(--raio-b); background: var(--vinho); color: #fff;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: .88rem; box-shadow: var(--sombra); }
+.rascunho .botao { padding: 8px 14px; font-size: .85rem; }
+
+.conteudo { padding: 16px; }
+.cartao { background: var(--branco); border-radius: var(--raio); padding: 16px; box-shadow: var(--sombra); margin-bottom: 14px; }
+.sub { color: var(--texto2); font-size: .88rem; margin: -.2em 0 .8em; }
+.voltar { background: none; border: 0; color: var(--rosa); font-weight: 600; padding: 4px 0; margin-bottom: 8px; cursor: pointer; }
+
+/* menu */
+.menu { display: grid; gap: 10px; }
+.menu-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--branco); border: 1px solid var(--linha);
+  border-radius: var(--raio); padding: 14px; cursor: pointer; box-shadow: var(--sombra); }
+.menu-item .icone { font-size: 1.3rem; width: 40px; height: 40px; border-radius: 10px; background: var(--rosa-cl); display: grid; place-items: center; flex: none; }
+.menu-item strong { display: block; color: var(--vinho); }
+.menu-item small { color: var(--texto2); }
+.menu-item .seta { margin-left: auto; color: var(--rosa); font-size: 1.3rem; }
+.menu-item[disabled] { opacity: .55; cursor: default; }
+
+/* campos */
+.campo { margin-bottom: 14px; }
+.campo label, .rotulo { display: block; font-weight: 600; font-size: .85rem; margin-bottom: 5px; color: var(--vinho); }
+.campo input, .campo textarea, .campo select { width: 100%; padding: 11px 12px; border: 1.5px solid var(--linha); border-radius: var(--raio-b); background: #fff; font-size: 16px; }
+.campo textarea { min-height: 90px; resize: vertical; }
+.campo input[type=checkbox], .campo input[type=radio] { width: 22px; height: 22px; padding: 0; flex: none; accent-color: var(--vinho); }
+.campo input[type=file] { padding: 8px; font-size: 14px; }
+.campo input:focus, .campo textarea:focus, .campo select:focus { outline: none; border-color: var(--rosa); box-shadow: 0 0 0 3px var(--rosa-cl); }
+.ajuda { font-size: .78rem; color: var(--cinza); margin-top: 4px; }
+.erro { color: var(--vermelho); font-size: .85rem; margin: 6px 0; font-weight: 600; }
+.sucesso { color: var(--verde); font-size: .85rem; margin: 6px 0; font-weight: 600; }
+.escolha { display: flex; gap: 8px; align-items: flex-start; padding: 10px; border: 1.5px solid var(--linha); border-radius: var(--raio-b); margin-bottom: 8px; cursor: pointer; }
+.escolha input { margin-top: 3px; }
+
+/* botões (retangulares, Brand Book) */
+.botao { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: var(--raio-b); padding: 12px 18px;
+  font-weight: 700; cursor: pointer; background: var(--vinho); color: #fff; text-decoration: none; }
+.botao:hover { background: #6F2239; }
+.botao.verde { background: var(--verde); } .botao.verde:hover { background: var(--verde-h); }
+.botao.claro { background: var(--rosa-cl); color: var(--vinho); }
+.botao.perigo { background: #fff; color: var(--vermelho); border: 1.5px solid #F2B8B8; }
+.botao:disabled { background: #BDB2B5; color: #fff; cursor: not-allowed; border: 0; }
+.botao.cheio { width: 100%; }
+.botoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* listas */
+.lista { list-style: none; padding: 0; margin: 0; }
+.lista > li { border-top: 1px solid var(--linha); padding: 12px 0; }
+.lista > li:first-child { border-top: 0; }
+.etiqueta { display: inline-block; font-size: .72rem; font-weight: 700; border-radius: var(--raio-b); padding: 2px 8px; background: var(--rosa-cl); color: var(--vinho); }
+.etiqueta.verde { background: #E7F7EE; color: var(--verde); } .etiqueta.cinza { background: #EEE8EA; color: var(--cinza); }
+.etiqueta.laranja { background: #FFF4E5; color: var(--laranja); }
+.miudo { font-size: .8rem; color: var(--texto2); }
+.antes-depois { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; font-size: .85rem; }
+.antes-depois div { background: var(--nevoa); border-radius: var(--raio-b); padding: 8px; word-break: break-word; }
+.antes-depois b { display: block; font-size: .72rem; color: var(--texto2); }
+.previa-foto { max-width: 220px; max-height: 220px; border-radius: var(--raio-b); margin-bottom: 6px; background: var(--nevoa); }
+.previa-foto:not([src]) { display: none; }
+.video-item { border: 1px solid var(--linha); border-radius: var(--raio-b); padding: 10px; margin-bottom: 10px; display: grid; gap: 6px; }
+.link-convite { word-break: break-all; background: var(--nevoa); border: 1px dashed var(--rosa); border-radius: var(--raio-b); padding: 10px; font-size: .85rem; }
+.aviso-item.novo { border-left: 4px solid var(--rosa); padding-left: 10px; }
+
+/* entrada */
+.entrada { max-width: 400px; margin: 0 auto; padding: 40px 16px; }
+.entrada .topo-logo { height: 56px; margin: 0 auto 18px; }
+
+/* ---------- computador: menu à esquerda, telas no meio, prévia à direita (22/10) ---------- */
+.lateral, .coluna-previa { display: none; }
+.pagina-previa { background: #fff; }
+.previa-simples { max-width: 980px; margin: 0 auto; padding: 0 0 24px; }
+.previa-aviso { background: #FFF4E5; color: var(--laranja); font-size: .8rem; padding: 8px 12px; margin: 0 0 8px; }
+.previa-faixa-campanha { background: var(--vermelho); color: #fff; padding: 10px 14px; font-size: .9rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; }
+.previa-contagem { background: rgba(0,0,0,.18); border-radius: var(--raio-b); padding: 2px 8px; font-weight: 700; }
+.previa-faixa { background: var(--vinho); color: #fff; text-align: center; font-size: .82rem; padding: 6px 12px; }
+.previa-logo { height: 70px; margin: 18px auto 6px; }
+.previa-simples h1 { text-align: center; padding: 0 16px; }
+.previa-simples .cartao { margin: 12px 16px; }
+.previa-produtos { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+
+@media (min-width: 760px) {
+  .grade { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100vh; }
+  .lateral { display: flex; flex-direction: column; gap: 2px; width: 230px; background: var(--vinho); color: #fff; padding: 12px 10px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto; transition: width .2s; }
+  .lateral.recolhido { width: 64px; }
+  .lateral.recolhido .lateral-texto, .lateral.recolhido .lateral-secao, .lateral.recolhido .lateral-logo { display: none; }
+  .lateral-topo { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 10px; }
+  .lateral-logo { height: 34px; background: #fff; border-radius: var(--raio-b); padding: 3px 6px; }
+  .lateral-recolher { background: rgba(255,255,255,.12); color: #fff; border: 0; border-radius: var(--raio-b); width: 38px; height: 34px; cursor: pointer; font-size: 1.1rem; }
+  .lateral-secao { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; opacity: .7; margin: 12px 8px 4px; }
+  .lateral-item { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; color: #fff; text-align: left;
+    padding: 9px 10px; border-radius: var(--raio-b); cursor: pointer; font-size: .88rem; }
+  .lateral-item:hover { background: rgba(255,255,255,.1); }
+  .lateral-item.ativo { background: #fff; color: var(--vinho); font-weight: 700; }
+  .lateral-icone { width: 22px; text-align: center; flex: none; }
+  .lateral-fim { margin-top: auto; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.15); }
+  .meio .topo .topo-logo { display: none; }
+  .casca { max-width: 860px; }
+}
+@media (min-width: 1100px) {
+  .grade { grid-template-columns: auto minmax(0, 1fr) minmax(360px, 34vw); }
+  .coluna-previa { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 0; height: 100vh; padding: 12px; background: #fff; border-left: 1px solid var(--linha); }
+  .previa-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .previa-topo .botoes { margin: 0; }
+  .previa-topo .botao { padding: 6px 10px; font-size: .8rem; }
+  .previa-topo .botao.ativo { background: var(--vinho); color: #fff; }
+  .previa-moldura { flex: 1; overflow: hidden; border: 1px solid var(--linha); border-radius: var(--raio-b); background: var(--nevoa); position: relative; }
+  .previa-iframe { border: 0; background: #fff; transform-origin: 0 0; position: absolute; top: 0; left: 0; }
+}
+
+.faixa-demo { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; padding: 6px 12px;
+  background: #FFF4C2; color: #4A3B00; font-size: .8rem; text-align: center; }
+.faixa-demo button { background: none; border: 0; text-decoration: underline; cursor: pointer; font-size: .8rem; color: inherit; }
