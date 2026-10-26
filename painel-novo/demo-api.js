@@ -6,10 +6,24 @@
   const CHAVE = "painel-brumar-demo-v1";
   const base = window.DEMO_DADOS;
   const ESQUEMA = base.esquema;
-  const novo = () => ({ site: JSON.parse(JSON.stringify(base.dados)), rascunho: {}, historico: [], usadas: 0 });
+  const copia = (x) => JSON.parse(JSON.stringify(x));
+  // Só os arquivos que o painel muda (os do esquema) ficam guardados no aparelho. Os outros (marca.json,
+  // avaliacoes.json de ~400 KB, inicial.json...) vêm sempre de demo-dados.js: a prévia recebe TODOS os dados, como
+  // no servidor (/painel/api/previa), sem encher o armazenamento. Também completa o que foi guardado antes (26/10).
+  const EDITAVEIS = new Set(Object.keys(ESQUEMA.campos).map((c) => c.split(".")[0]));
+  const comTodos = (site) => {
+    const s = site && typeof site === "object" && !Array.isArray(site) ? site : {};
+    for (const [k, v] of Object.entries(base.dados)) if (!Object.hasOwn(s, k) || !EDITAVEIS.has(k)) s[k] = copia(v);
+    return s;
+  };
+  const novo = () => ({ site: copia(base.dados), rascunho: {}, historico: [], usadas: 0 });
   let E;
   try { E = JSON.parse(localStorage.getItem(CHAVE)) || novo(); } catch { E = novo(); }
-  const guardar = () => { try { localStorage.setItem(CHAVE, JSON.stringify(E)); } catch { /* sem espaço */ } };
+  E.site = comTodos(E.site);
+  const guardar = () => {
+    const site = Object.fromEntries(Object.entries(E.site).filter(([k]) => EDITAVEIS.has(k)));
+    try { localStorage.setItem(CHAVE, JSON.stringify({ ...E, site })); } catch { /* sem espaço */ }
+  };
   window.recomecarDemo = () => { E = novo(); guardar(); location.hash = ""; location.reload(); };
 
   const EU = { nome: "Bruna", email: "bruna@exemplo.com", papel: "responsavel" };
@@ -61,6 +75,17 @@
       }
     }
     if (r.tipo === "lista-de-textos") return listaDeTextos(valor, r, n, proibida).erro || null;
+    // Vídeos: no máximo "max" e capa nova só JPEG ("foto:<id>.jpg"), com as mesmas mensagens do servidor
+    // (lib/regras.mjs; achado 3 do chat do site, 26/10). A capa que já está no site ("/...") continua aceita.
+    if (r.tipo === "videos") {
+      const max = Number.isInteger(r.max) ? r.max : 12;
+      if (!Array.isArray(valor) || valor.length > max) return `${n}: no máximo ${max} vídeos.`;
+      for (const [i, v] of valor.entries()) {
+        const capa = String((v && v.capa) || "");
+        if (/^foto:[0-9a-f]{64}\.(png|webp)$/.test(capa)) return `${n} (vídeo ${i + 1}): a capa nova precisa ser uma foto JPEG. Envie o vídeo de novo.`;
+        if (capa && !/^foto:[0-9a-f]{64}\.jpg$/.test(capa) && !/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(jpe?g|png|webp)$/.test(capa)) return `${n} (vídeo ${i + 1}): capa inválida.`;
+      }
+    }
     return null;
   }
 

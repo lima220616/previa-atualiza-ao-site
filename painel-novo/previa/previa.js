@@ -329,18 +329,38 @@ export async function htmlDaPrevia(resposta, base, foco = "", ajuda = {}) {
 // botão do aparelho (rodada 2 da conferência). Dentro de outra página (iframe), não aparece. Volta pelo histórico
 // (o painel abre na mesma tela, com o que estava guardado); sem histórico, abre o painel. Estilo no próprio botão:
 // a página pode ser o molde do site, sem o CSS do painel.
+// É um BOTÃO e navega sempre por aqui (rodada 4): no modo prévia, o molde cancela o clique em todo link que não
+// começa com "#" ("Prévia: este link não abre aqui."). Com o link de antes, aberta sem o painel antes, o toque não
+// fazia nada. Janelas do site (WhatsApp, vídeo, foto) e trocas de tela ("#...") põem passos a mais no histórico
+// desta página: enquanto o "voltar" ainda cai aqui (popstate), volta mais um; depois de 10, abre o painel.
+const PASSOS_PARA_VOLTAR = 10;
 export function colocarVoltarAoPainel(doc, janela) {
   if (janela.top !== janela || !doc.body) return null;
-  const voltar = doc.createElement("a");
+  const painel = new URL("../", janela.location.href).href;
+  const voltar = doc.createElement("button");
+  voltar.type = "button";
   voltar.className = "previa-voltar";
-  voltar.href = new URL("../", janela.location.href).href;
   voltar.textContent = "‹ Voltar ao painel";
-  voltar.setAttribute("style", "position:sticky;top:0;z-index:2147483647;display:block;min-height:44px;padding:12px 16px;"
-    + "background:#fff;color:#8A2E48;font:600 16px/20px system-ui,sans-serif;text-decoration:none;border-bottom:1px solid #eee");
+  voltar.setAttribute("style", "position:sticky;top:0;z-index:2147483647;display:block;box-sizing:border-box;width:100%;min-height:44px;"
+    + "margin:0;padding:12px 16px;background:#fff;color:#8A2E48;font:600 16px/20px system-ui,sans-serif;text-align:left;"
+    + "border:0;border-bottom:1px solid #eee;border-radius:0;cursor:pointer");
+  let voltando = false;
   voltar.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (voltando) return; // dois toques seguidos: um "voltar" só
     let doPainel = false;
-    try { doPainel = new URL(doc.referrer).pathname.startsWith(new URL("../", janela.location.href).pathname); } catch { /* sem referrer */ }
-    if (doPainel && janela.history.length > 1) { e.preventDefault(); janela.history.back(); }
+    try { doPainel = new URL(doc.referrer).pathname.startsWith(new URL(painel).pathname); } catch { /* sem referrer */ }
+    if (!doPainel || !(janela.history.length > 1)) { janela.location.href = painel; return; }
+    voltando = true;
+    let passos = 0;
+    const parar = () => { voltando = false; janela.removeEventListener("popstate", maisUm); janela.removeEventListener("pagehide", parar); };
+    function maisUm() {
+      if (++passos >= PASSOS_PARA_VOLTAR) { parar(); janela.location.href = painel; return; }
+      janela.history.back();
+    }
+    janela.addEventListener("popstate", maisUm);
+    janela.addEventListener("pagehide", parar); // saiu da prévia: nada fica ouvindo (se ela voltar da memória do navegador)
+    janela.history.back();
   });
   doc.body.prepend(voltar);
   return voltar;

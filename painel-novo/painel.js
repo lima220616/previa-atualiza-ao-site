@@ -626,6 +626,9 @@ function garantirEstrutura() {
   estrutura = { raiz, menu, fundo, meio, iframe: null, moldura: null, botoesModo: [], abrirMenu: null };
   // A prévia só é montada em tela larga (no celular ela gastaria leituras à toa).
   if (window.matchMedia(TELA_LARGA).matches) {
+    // SEM o atributo sandbox (achado 2 do chat do site, 26/10): com sandbox sem allow-same-origin, a prévia vira uma
+    // página "de origem nenhuma" e as letras do site (fontes) não carregam (o navegador barra por CORS). A página da
+    // prévia é montada aqui (srcdoc) com os dados escapados; o teste preparacao-ramo.test.mjs falha se alguém puser.
     const iframe = h("iframe", { class: "previa-iframe", title: "Prévia do site" });
     const moldura = h("div", { class: "previa-moldura" }, iframe);
     const botoesModo = ["celular", "computador"].map((modo) => h("button", { class: "botao claro", type: "button", "data-modo": modo, onclick: () => {
@@ -1050,6 +1053,34 @@ async function capaDoVideo(arquivo) {
   }
 }
 
+// Capa de vídeo nova SEMPRE em JPEG (achado 3 do chat do site, 26/10): o montador do site só aceita capa .jpg em
+// videos/painel/, e o servidor recusa capa nova PNG ou WebP. Toda capa passa por aqui antes de ir ao servidor: JPEG
+// segue como está; PNG ou WebP é redesenhada no canvas (fundo branco, até 720 px) e vira JPEG com qualidade 0,85.
+// Se não der para converter, devolve null (o vídeo segue sem capa, como quando o quadro não sai).
+const QUALIDADE_CAPA = 0.85;
+async function capaEmJpeg(imagem) {
+  if (!imagem) return null;
+  if (imagem.type === "image/jpeg") return imagem;
+  let quadro;
+  try { quadro = await createImageBitmap(imagem); } catch { return null; }
+  try {
+    const escala = Math.min(1, 720 / Math.max(quadro.width, quadro.height));
+    const tela = h("canvas");
+    tela.width = Math.max(1, Math.round(quadro.width * escala));
+    tela.height = Math.max(1, Math.round(quadro.height * escala));
+    const pincel = tela.getContext("2d");
+    pincel.fillStyle = "#FFFFFF"; // JPEG não tem fundo transparente: sem isto, o transparente do PNG ficaria preto
+    pincel.fillRect(0, 0, tela.width, tela.height);
+    pincel.drawImage(quadro, 0, 0, tela.width, tela.height);
+    const jpeg = await comPrazo(new Promise((ok) => tela.toBlob(ok, "image/jpeg", QUALIDADE_CAPA)), PRAZO_CAPA);
+    return jpeg && jpeg.type === "image/jpeg" ? jpeg : null;
+  } catch {
+    return null;
+  } finally {
+    quadro.close?.();
+  }
+}
+
 async function enviarBinario(rota, corpo, tipo, metodo = "POST") {
   let r;
   try {
@@ -1071,6 +1102,10 @@ async function enviarVideo(arquivo, aoAndar) {
   aoAndar(100);
   return enviarBinario("video?acao=finalizar", JSON.stringify({ id: ini.id }), "application/json");
 }
+
+// Por que o vídeo novo ficou sem capa (na faixa, depois de "Vídeo pronto (X MB), mas sem capa: ").
+const SEM_CAPA_APARELHO = "este aparelho não conseguiu tirar a foto do vídeo. Toque em Salvar ou tente em outro navegador.";
+const SEM_CAPA_ENVIO = "a foto do vídeo não ficou guardada. Toque em Salvar ou tire o vídeo e envie de novo.";
 
 // Lista de vídeos como o site entende: vídeo sem "visivel" aparece (item 57).
 const normalizarVideos = (vs) => soObjetos(vs).map((v) => ({ arquivo: String(v.arquivo ?? ""), capa: v.capa || "", titulo: v.titulo || "", visivel: visivelDe(v) }));
@@ -1114,23 +1149,32 @@ function entradaDeVideos(c, valor, aoMudar) {
     enviosEmAndamento++;
     try {
       nota.textContent = "Tirando a capa do vídeo…";
+      // Só JPEG vai como capa (capaEmJpeg); se não sair JPEG, o vídeo segue sem capa. Sem capa, a faixa avisa e diz o
+      // porquê (rodada 4: antes, a capa sumia calada). O vídeo continua valendo nos dois casos.
       let capa = "";
-      try {
-        const imagem = await capaDoVideo(arquivo);
-        if (imagem) capa = (await enviarBinario("foto", imagem, imagem.type)).valor;
-      } catch (e) {
-        if (!eu) throw e; // a entrada venceu: para aqui
-        /* sem capa: o vídeo continua valendo */
+      let semCapa = "";
+      let imagem = null;
+      try { imagem = await capaEmJpeg(await capaDoVideo(arquivo)); } catch { /* o quadro não saiu (prazo ou vídeo que o aparelho não lê) */ }
+      if (!imagem) semCapa = SEM_CAPA_APARELHO;
+      else {
+        try {
+          const enviada = (await enviarBinario("foto", imagem, "image/jpeg")).valor;
+          if (/^foto:[0-9a-f]{64}\.jpg$/.test(enviada || "")) capa = enviada;
+          else semCapa = SEM_CAPA_ENVIO;
+        } catch (e) {
+          if (!eu) throw e; // a entrada venceu: para aqui
+          semCapa = SEM_CAPA_ENVIO;
+        }
       }
       const enviado = await enviarVideo(arquivo, (p) => { nota.textContent = `Enviando o vídeo… ${p}%`; });
       lista.push({ arquivo: enviado.valor, capa, titulo: "", visivel: true });
       desenhar();
       mexeu(); // fica guardado no aparelho mesmo se a pessoa já tiver saído desta tela
       const mb = Number(enviado.megas || 0).toLocaleString("pt-BR");
-      nota.textContent = enviado.pesado
-        ? `Vídeo pesado (${mb} MB): ao publicar, o robô diminui para até 8 MB. Toque em Salvar.`
-        : `Vídeo pronto (${mb} MB). Toque em Salvar.`;
-      avisarEnvioTerminado(el, `O vídeo de "${c.nome || "Vídeos"}" terminou de subir e ficou guardado neste aparelho.`, rota);
+      const pesado = `Vídeo pesado (${mb} MB): ao publicar, o robô diminui para até 8 MB.`;
+      if (!semCapa) nota.textContent = enviado.pesado ? `${pesado} Toque em Salvar.` : `Vídeo pronto (${mb} MB). Toque em Salvar.`;
+      else nota.textContent = enviado.pesado ? `${pesado} Ficou sem capa: ${semCapa}` : `Vídeo pronto (${mb} MB), mas sem capa: ${semCapa}`;
+      avisarEnvioTerminado(el, `O vídeo de "${c.nome || "Vídeos"}" terminou de subir${semCapa ? " (sem capa)" : ""} e ficou guardado neste aparelho.`, rota);
     } catch (e) {
       nota.textContent = "";
       mensagem(erroVideo, e.paraPessoa ? e.message : "Não foi possível usar este vídeo. Tente outro.");
