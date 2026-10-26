@@ -71,6 +71,8 @@ img { max-width: 100%; display: block; }
 .campo input[type=checkbox], .campo input[type=radio] { width: 22px; height: 22px; padding: 0; flex: none; accent-color: var(--vinho); }
 .campo input[type=file] { padding: 8px; font-size: 14px; }
 .campo input:focus, .campo textarea:focus, .campo select:focus { outline: none; border-color: var(--rosa); box-shadow: 0 0 0 3px var(--rosa-cl); }
+/* campo (ou frase) que o Salvar recusou: contorno vermelho até a pessoa corrigir (rodada 2 da conferência) */
+.campo [aria-invalid="true"] { border-color: var(--vermelho); box-shadow: 0 0 0 3px #FBE3E3; }
 .ajuda { font-size: .78rem; color: var(--cinza); margin-top: 4px; }
 .erro { color: var(--vermelho); font-size: .85rem; margin: 6px 0; font-weight: 600; }
 .sucesso { color: var(--verde); font-size: .85rem; margin: 6px 0; font-weight: 600; }
@@ -97,13 +99,52 @@ img { max-width: 100%; display: block; }
 .etiqueta.laranja { background: #FFF4E5; color: var(--laranja); }
 .miudo { font-size: .8rem; color: var(--texto2); }
 .antes-depois { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; font-size: .85rem; }
-.antes-depois div { background: var(--nevoa); border-radius: var(--raio-b); padding: 8px; word-break: break-word; }
-.antes-depois b { display: block; font-size: .72rem; color: var(--texto2); }
+/* Só as duas colunas (Antes/Depois): o que vai dentro delas (campanhas, vídeos, foto) não ganha outro fundo. */
+.antes-depois > div { background: var(--nevoa); border-radius: var(--raio-b); padding: 8px; word-break: break-word; min-width: 0; }
+.antes-depois > div > b { display: block; font-size: .72rem; color: var(--texto2); }
 .previa-foto { max-width: 220px; max-height: 220px; border-radius: var(--raio-b); margin-bottom: 6px; background: var(--nevoa); }
 .previa-foto:not([src]) { display: none; }
 .video-item { border: 1px solid var(--linha); border-radius: var(--raio-b); padding: 10px; margin-bottom: 10px; display: grid; gap: 6px; }
+/* lista de frases (destaques, para quem é, cuidados, modo de usar; contrato C1): uma caixa por frase */
+.frase { border: 1px solid var(--linha); border-radius: var(--raio-b); padding: 10px; margin-bottom: 10px; }
+.campo .frase textarea { min-height: 0; }
+.frase .ajuda, .frase .erro { margin: 4px 0 0; }
+.frase .botoes { margin-top: 6px; }
+.frase .botao { padding: 8px 12px; font-size: .85rem; }
+.frases-quantas { font-weight: 600; color: var(--texto2); }
+.valor-frases li { overflow-wrap: anywhere; }
 .link-convite { word-break: break-all; background: var(--nevoa); border: 1px dashed var(--rosa); border-radius: var(--raio-b); padding: 10px; font-size: .85rem; }
 .aviso-item.novo { border-left: 4px solid var(--rosa); padding-left: 10px; }
+/* avisos e textos com quebra de linha (lista de mudanças, recado; auditoria 2, item 60) */
+.aviso-texto { white-space: pre-line; }
+.valor-texto { white-space: pre-wrap; word-break: break-word; }
+
+/* o que muda de verdade em Aprovações, conflitos, Histórico e Publicar (auditoria 2, itens 4 e 60) */
+.antes-depois.um { grid-template-columns: 1fr; }
+.miniatura { width: 120px; height: 120px; object-fit: cover; border-radius: var(--raio-b); background: var(--nevoa); border: 1px solid var(--linha); }
+.miniatura.pequena { width: 52px; height: 52px; flex: none; }
+.miniatura.sem-imagem { visibility: hidden; }
+.valor-foto { display: grid; gap: 4px; justify-items: start; }
+.valor-lista { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 8px; }
+.valor-item { display: flex; gap: 8px; align-items: center; }
+.valor-item.campanha { display: list-item; }
+.valor-item.campanha div { font-size: .8rem; }
+.valor-item .etiqueta { margin-left: 4px; }
+.sem-capa { width: 52px; height: 52px; flex: none; display: grid; place-items: center; font-size: .65rem; text-align: center; color: var(--cinza); background: var(--nevoa); border-radius: var(--raio-b); }
+.mudou { background: #FFF1B8; border-radius: 3px; padding: 0 3px; }
+.escolha-conteudo { display: block; flex: 1; min-width: 0; }
+.no-site { margin-top: 6px; }
+.no-site p { margin: 0 0 4px; }
+.lista-invalidos { margin: 4px 0 12px; }
+.lista-invalidos .botao { margin-top: 6px; }
+
+/* texto recuperado do aparelho: só entra no campo se a pessoa tocar em "Usar" (auditoria 2, itens 25 e 33) */
+.recuperado { border: 1.5px dashed var(--verde); background: #F3FBF6; border-radius: var(--raio-b); padding: 8px 10px; margin: 6px 0 10px; }
+.recuperado .sucesso { margin-top: 0; }
+.recuperado .botoes { margin-top: 6px; }
+
+/* foco visível para quem usa teclado (auditoria 2, item 61) */
+button:focus-visible, a:focus-visible, .escolha:focus-within { outline: 3px solid var(--rosa); outline-offset: 2px; }
 
 /* entrada */
 .entrada { max-width: 400px; margin: 0 auto; padding: 40px 16px; }
@@ -121,6 +162,37 @@ img { max-width: 100%; display: block; }
 .previa-simples h1 { text-align: center; padding: 0 16px; }
 .previa-simples .cartao { margin: 12px 16px; }
 .previa-produtos { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+/* prévia simplificada com todas as partes (26/10): uma por grupo do painel, para a prévia acompanhar o grupo aberto */
+.previa-parte { padding: 8px 0; scroll-margin-top: 8px; }
+.previa-parte > h2 { padding: 0 16px; margin-top: 14px; }
+.previa-centro { text-align: center; padding: 0 16px; }
+.previa-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.previa-grade .cartao { margin: 8px; }
+.previa-simples .escondido { opacity: .55; }
+.previa-capas { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px; }
+.previa-capa { margin: 0; font-size: .75rem; color: var(--texto2); }
+.previa-capa img, .previa-sem-capa { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: var(--raio-b); background: var(--nevoa); }
+.previa-sem-capa { display: grid; place-items: center; font-size: 1.4rem; color: var(--rosa); }
+.previa-preco { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 0; }
+.previa-preco strong { font-size: 1.1rem; color: var(--vinho); }
+.previa-de { text-decoration: line-through; color: var(--cinza); font-size: .8rem; }
+.previa-pix { color: var(--verde); font-weight: 700; font-size: .82rem; }
+.previa-botao { background: #fff; color: var(--vermelho); border-radius: var(--raio-b); padding: 2px 8px; font-weight: 700; }
+.previa-simples details { border-top: 1px solid var(--linha); padding: 8px 0; }
+.previa-simples summary { cursor: pointer; font-weight: 600; }
+.previa-bio { max-width: 480px; margin: 0 auto; min-height: 100vh; padding: 0 0 24px; background: #fff; }
+.previa-frases { margin-top: 6px; }
+.previa-frases ul, .previa-frases ol { margin: 2px 0 0; padding-left: 18px; }
+.previa-grade .cartao { min-width: 0; overflow-wrap: anywhere; }
+/* Prévia simplificada em tela estreita (celular ou o modo 📱 da coluna da prévia): cartões numa coluna só e fotos
+   nunca mais largas que a tela. */
+@media (max-width: 560px) {
+  .previa-grade { grid-template-columns: minmax(0, 1fr); }
+  .previa-grade .cartao { margin: 8px 12px; }
+  .previa-simples .previa-foto, .previa-bio .previa-foto { max-width: 100%; height: auto; }
+  .previa-simples img, .previa-bio img { max-width: 100%; }
+  .previa-capas { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); }
+}
 
 @media (min-width: 760px) {
   .grade { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100vh; }
@@ -184,7 +256,32 @@ img { max-width: 100%; display: block; }
   .fundo-menu { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.35); display: none; }
   .fundo-menu.aberto { display: block; }
   .tabela .acoes { white-space: normal; }
-  .acao { margin: 3px 0 3px 4px; }
+  /* Fechado, o menu sai também da leitura de tela e do Tab (junto com inert/aria-hidden do painel.js; item 61). */
+  .lateral { visibility: hidden; transition: transform .2s, visibility 0s linear .2s; }
+  .lateral.aberto { visibility: visible; transition: transform .2s; }
+  /* Botões com pelo menos 44 px de altura para o dedo (item 61). */
+  .acao { min-height: 44px; padding: 10px 12px; margin: 4px 0 4px 8px; }
+  .voltar { min-height: 44px; padding: 10px 0; }
+  .botao, .sino, .lateral-item, .menu-item { min-height: 44px; }
+  .abrir-menu { width: 44px; height: 44px; }
+  .rascunho .botao { padding: 10px 14px; }
+}
+@media (max-width: 479px) {
+  .antes-depois { grid-template-columns: 1fr; }
+}
+/* Celular estreito: cada linha das listas (Campanhas, Produtos, Vídeos) vira um cartão, com o nome da coluna antes
+   do valor, e os botões Editar/Excluir ficam à vista, sem rolar para o lado (item 61). */
+@media (max-width: 559px) {
+  .tabela thead { display: none; }
+  .tabela, .tabela tbody, .tabela tr, .tabela td { display: block; width: 100%; }
+  .tabela tr { border-bottom: 1px solid var(--linha); padding: 10px 0; }
+  .tabela tr:last-child { border-bottom: 0; }
+  .tabela td { border: 0; padding: 3px 0; }
+  .tabela tr:hover td { background: none; }
+  .tabela td[data-rotulo]::before { content: attr(data-rotulo) ": "; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--texto2); }
+  .tabela td:first-child::before, .tabela td.acoes::before { content: none; }
+  .tabela .acoes { display: flex; flex-wrap: wrap; gap: 8px; text-align: left; white-space: normal; padding-top: 8px; }
+  .tabela .acao { margin: 0; }
 }
 
 .faixa-demo { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; padding: 6px 12px;

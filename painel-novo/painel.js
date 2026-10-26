@@ -7,6 +7,212 @@ const NOMES_PAPEL = { admin: "Administradora", responsavel: "Responsável", func
 const app = document.getElementById("app");
 let eu = null;
 
+// <ajudantes-puros> Sem tela e sem servidor: testados direto em testes/auditoria2-telas.test.mjs (auditoria 2).
+
+// Data do site ("2026-11-30T23:59", horário de Brasília) do jeito brasileiro: "30/11/2026 às 23h59" (item 60).
+function dataBR(t) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(t ?? ""));
+  return m ? `${m[3]}/${m[2]}/${m[1]} às ${m[4]}h${m[5]}` : String(t ?? "");
+}
+
+// Vídeo sem "visivel" nos dados aparece no site (o site só esconde visivel: false): o painel segue a mesma regra (item 57).
+const visivelDe = (v) => v?.visivel !== false;
+
+const soObjetos = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === "object" && !Array.isArray(x)) : []);
+
+// Tipo do campo: o das regras (vem com cada campo em /painel/api/conteudo) ou, sem elas, pelo formato do valor.
+function tipoDoValor(v, regra) {
+  if (regra && typeof regra.tipo === "string") return regra.tipo;
+  if (typeof v === "boolean") return "ligado";
+  if (Array.isArray(v)) {
+    if (v.some((x) => x && typeof x === "object" && "arquivo" in x)) return "videos";
+    if (v.some((x) => x && typeof x === "object" && ("termina" in x || "titulo" in x))) return "campanhas";
+    // Lista só de frases (destaques, para quem é...): mesmo sem as regras, aparece frase por frase (contrato C1).
+    if (v.length && v.every((x) => typeof x === "string")) return "lista-de-textos";
+    return "lista";
+  }
+  if (typeof v === "string" && /^(?:foto:\S+|\S+\.(?:jpe?g|png|webp))$/i.test(v)) return "foto";
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) return "data";
+  return "texto";
+}
+
+// Valor simples (texto, link, data, escolha, ligado) como a pessoa entende: rótulo da escolha, data brasileira,
+// "Ligado"/"Desligado". Nunca o código cru ("nevoa", "2026-11-30T23:59"; item 60).
+function textoSimples(v, regra) {
+  const tipo = tipoDoValor(v, regra);
+  const rotulos = regra && regra.rotulos && typeof regra.rotulos === "object" ? regra.rotulos : {};
+  if (tipo === "escolha" && Object.hasOwn(rotulos, String(v ?? ""))) return String(rotulos[String(v ?? "")]);
+  if (v === undefined || v === null || v === "") return "(vazio)";
+  if (tipo === "ligado") return v === true ? "Ligado" : v === false ? "Desligado" : String(v);
+  if (tipo === "data") return dataBR(v);
+  if (typeof v === "object") return "(conteúdo que o painel não sabe mostrar)";
+  return String(v);
+}
+
+// Vídeos: o que muda entre duas listas, vídeo por vídeo (pelo arquivo): quais entraram, saíram, ficaram escondidos
+// ou voltaram a aparecer, título ou capa trocados e se a ordem mudou (item 4).
+function diferencaDeVideos(antes, depois) {
+  const a = soObjetos(antes);
+  const d = soObjetos(depois);
+  const chave = (v) => String(v.arquivo ?? "");
+  const deAntes = new Map(a.map((v) => [chave(v), v]));
+  const deDepois = new Map(d.map((v) => [chave(v), v]));
+  const ficaram = d.filter((v) => deAntes.has(chave(v)));
+  return {
+    entraram: d.filter((v) => !deAntes.has(chave(v))),
+    sairam: a.filter((v) => !deDepois.has(chave(v))),
+    esconderam: ficaram.filter((v) => visivelDe(deAntes.get(chave(v))) && !visivelDe(v)),
+    apareceram: ficaram.filter((v) => !visivelDe(deAntes.get(chave(v))) && visivelDe(v)),
+    titulos: ficaram.filter((v) => String(deAntes.get(chave(v)).titulo ?? "").trim() !== String(v.titulo ?? "").trim()),
+    capas: ficaram.filter((v) => String(deAntes.get(chave(v)).capa ?? "") !== String(v.capa ?? "")),
+    ordemMudou: JSON.stringify(a.map(chave).filter((k) => deDepois.has(k))) !== JSON.stringify(ficaram.map(chave)),
+  };
+}
+
+function resumoDeVideos(dif) {
+  const partes = [];
+  const contar = (n, um, varios) => { if (n) partes.push(`${n} ${n === 1 ? um : varios}`); };
+  contar(dif.entraram.length, "entrou", "entraram");
+  contar(dif.sairam.length, "saiu", "saíram");
+  contar(dif.esconderam.length, "escondido", "escondidos");
+  contar(dif.apareceram.length, "voltou a aparecer", "voltaram a aparecer");
+  contar(dif.titulos.length, "título mudou", "títulos mudaram");
+  contar(dif.capas.length, "capa trocada", "capas trocadas");
+  if (dif.ordemMudou) partes.push("ordem mudou");
+  return partes.join(" · ");
+}
+
+// Listas de frases (contrato C1): o que entrou, saiu ou mudou, frase por frase. Primeiro liga as frases iguais. Das
+// que sobram, só vira "mudou" (texto trocado) a frase parecida com uma que sobrou do outro lado (metade das palavras
+// em comum) ou a que ficou na mesma posição; o resto entrou ou saiu. Antes, uma frase tirada e outra nova sem
+// relação viravam "1 mudou", e quem aprovava não via que uma promessa saiu do site e outra entrou (rodada 2).
+// comoAntes/comoDepois: "igual" | "mudou" | "saiu" (antes) | "entrou" (depois), na posição de cada frase.
+const soTextos = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : []); // caixa vazia não conta
+// Palavras de 3 letras ou mais, sem acento e sem maiúscula ("de", "o", "e" não fazem duas frases parecidas).
+const palavrasDe = (t) => new Set(t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter((p) => p.length >= 3));
+function parecidas(x, y) {
+  const a = palavrasDe(x);
+  const b = palavrasDe(y);
+  const menor = Math.min(a.size, b.size);
+  return menor > 0 && [...a].filter((p) => b.has(p)).length / menor >= 0.5;
+}
+function diferencaDeTextos(antes, depois) {
+  const a = soTextos(antes);
+  const d = soTextos(depois);
+  const comoAntes = a.map(() => "saiu");
+  const parDe = d.map((x) => {
+    const j = a.findIndex((y, k) => comoAntes[k] === "saiu" && y.trim() === x.trim());
+    if (j >= 0) comoAntes[j] = "igual";
+    return j;
+  });
+  const sobrando = a.map((_, k) => k).filter((k) => comoAntes[k] === "saiu");
+  const comoDepois = d.map((x, i) => {
+    if (parDe[i] >= 0) return "igual";
+    let k = sobrando.findIndex((j) => parecidas(a[j], x));
+    if (k < 0) k = sobrando.indexOf(i);
+    if (k < 0) return "entrou";
+    comoAntes[sobrando.splice(k, 1)[0]] = "mudou";
+    return "mudou";
+  });
+  const iguais = parDe.filter((j) => j >= 0);
+  return { comoAntes, comoDepois, ordemMudou: iguais.some((j, i) => i > 0 && j < iguais[i - 1]) };
+}
+function resumoDeTextos(dif) {
+  const n = (lista, como) => lista.filter((x) => x === como).length;
+  const partes = [];
+  const contar = (q, um, varios) => { if (q) partes.push(`${q} ${q === 1 ? um : varios}`); };
+  contar(n(dif.comoDepois, "entrou"), "entrou", "entraram");
+  contar(n(dif.comoAntes, "saiu"), "saiu", "saíram");
+  contar(n(dif.comoDepois, "mudou"), "mudou", "mudaram");
+  if (dif.ordemMudou) partes.push("ordem mudou");
+  return partes.join(" · ");
+}
+// Limites da lista de frases que vêm com o campo ("max-itens" e "max-letras" do esquema). Sem eles, os maiores
+// combinados com o chat do site (12 frases de 200 letras); o servidor confere de novo.
+const inteiroOu = (v, padrao) => (Number.isInteger(v) && v > 0 ? v : padrao);
+const limitesDaLista = (c) => ({ itens: inteiroOu(c?.["max-itens"] ?? c?.maxItens, 12), letras: inteiroOu(c?.["max-letras"] ?? c?.maxLetras, 200) });
+
+const CAMPOS_DA_CAMPANHA = ["titulo", "texto", "botao", "termina", "ligada"];
+const mesmaParte = (k, x, y) => (k === "ligada" ? (x !== false) === (y !== false) : String(x ?? "").trim() === String(y ?? "").trim());
+// Campanhas: liga cada campanha de "depois" à de "antes" com o mesmo título (ou, se o título mudou, à da mesma
+// posição) e diz quais partes mudaram (texto, botão, término, ligada); as que sobram em "antes" saíram (item 4).
+function diferencaDeCampanhas(antes, depois) {
+  const a = soObjetos(antes);
+  const d = soObjetos(depois);
+  const usadas = new Set();
+  const pares = d.map((x) => {
+    const j = a.findIndex((y, k) => !usadas.has(k) && String(y.titulo ?? "") === String(x.titulo ?? ""));
+    if (j >= 0) usadas.add(j);
+    return { x, j };
+  });
+  const titulosDepois = new Set(d.map((x) => String(x.titulo ?? "")));
+  pares.forEach((p, i) => {
+    if (p.j < 0 && i < a.length && !usadas.has(i) && !titulosDepois.has(String(a[i].titulo ?? ""))) { p.j = i; usadas.add(i); }
+  });
+  return {
+    pares: pares.map(({ x, j }) => ({ depois: x, antes: j >= 0 ? a[j] : null, nova: j < 0,
+      mudaram: j >= 0 ? CAMPOS_DA_CAMPANHA.filter((k) => !mesmaParte(k, a[j][k], x[k])) : [] })),
+    sairam: a.filter((_, k) => !usadas.has(k)),
+  };
+}
+
+// Resposta sem "erro" (tempo limite da função, 500/502 da Netlify, página HTML): mensagem em português (item 28).
+function erroPadrao(rota, status, metodo = "GET") {
+  if (metodo !== "GET" && status >= 500 && /^(publicar|aprovacoes|desfazer)\b/.test(rota)) {
+    // No Aprovar, o que continua guardado é o envio da funcionária, não "suas mudanças" (contrato C6).
+    const guardado = /^aprovacoes\b/.test(rota) ? "O envio continua esperando aprovação." : "Suas mudanças continuam salvas.";
+    return `O painel demorou para responder. ${guardado} Espere 2 minutos e abra o Histórico para ver se publicou antes de tentar de novo.`;
+  }
+  if (metodo === "GET") return "Não foi possível carregar agora. Tente de novo em instantes.";
+  return "Não foi possível concluir agora. Tente de novo em instantes.";
+}
+
+// O que ficou guardado no aparelho só vale no formato { valor, base, em } e por 7 dias (itens 25 e 33).
+const GUARDADO_PRAZO = 7 * 24 * 60 * 60 * 1000;
+function guardadoValido(texto, agora) {
+  try {
+    const g = JSON.parse(texto);
+    if (!g || typeof g !== "object" || !Object.hasOwn(g, "valor") || typeof g.base !== "string" || typeof g.em !== "number") return null;
+    if (agora - g.em > GUARDADO_PRAZO || g.em - agora > 60_000) return null;
+    return g;
+  } catch {
+    return null;
+  }
+}
+
+// A lista que a tela de Publicar mostrou, para o servidor publicar exatamente ela: { caminho: em } (item 23).
+const vistasDe = (mudancas) => Object.fromEntries(Object.entries(mudancas || {}).map(([c, m]) => [c, m?.em ?? null]));
+
+// Campos que mudaram no rascunho desde que a tela abriu (outra pessoa salvou, publicou ou descartou; item 26).
+const mudaramDesde = (itens, mudancasAgora) => itens.filter((x) => (mudancasAgora?.[x.caminho]?.em ?? null) !== (x.em ?? null));
+
+// Salvar ou "Voltar ao que está no site" recusado porque outra pessoa mudou o campo depois que a tela abriu: o
+// servidor responde 409 com { erro, atual, em } e não grava nada (contrato C3). Outros 409 (rascunho cheio, muita
+// gente salvando) não trazem "atual" nem "em".
+const outraPessoaMudou = (r) => r?.status === 409 && Boolean(r.dados) && (Object.hasOwn(r.dados, "atual") || Object.hasOwn(r.dados, "em"));
+
+// Código da versão (commit): curto ou completo, o começo bate.
+const mesmoCommit = (a, b) => typeof a === "string" && typeof b === "string" && a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a));
+// Código que veio na resposta do Publicar/Aprovar/Desfazer ou no Histórico (contrato C2: 40 letras; aceita o curto).
+const commitDe = (x) => (typeof x?.commit === "string" && /^[0-9a-f]{7,40}$/.test(x.commit) ? x.commit : null);
+
+// "Ana (a***@loja.com)": nome com o e-mail já mascarado pelo servidor; sem o e-mail, só o nome (contrato C5).
+const comEmail = (nome, email) => (typeof email === "string" && email ? `${nome} (${email})` : String(nome ?? ""));
+
+// Registro de acessos: "gerou convite de funcionaria" → "gerou convite de funcionária" (item 60).
+const PAPEL_ESCRITO = { admin: "administradora", responsavel: "responsável", funcionaria: "funcionária" };
+const papelLegivel = (texto) => String(texto ?? "").replace(/\b(funcionaria|responsavel|admin)\b/g, (p) => PAPEL_ESCRITO[p]);
+
+// Espera uma promessa por no máximo "ms"; depois desiste (ex.: capa do vídeo no iPhone; item 35).
+function comPrazo(promessa, ms) {
+  return new Promise((ok, falhou) => {
+    const relogio = setTimeout(() => falhou(new Error("prazo")), ms);
+    promessa.then((v) => { clearTimeout(relogio); ok(v); }, (e) => { clearTimeout(relogio); falhou(e); });
+  });
+}
+
+// </ajudantes-puros>
+
 // ---------- ajudantes ----------
 function h(tag, props, ...filhos) {
   const el = document.createElement(tag);
@@ -20,6 +226,8 @@ function h(tag, props, ...filhos) {
   for (const f of filhos.flat()) if (f !== null && f !== undefined && f !== false) el.append(f.nodeType ? f : document.createTextNode(String(f)));
   return el;
 }
+const novoId = () => "c" + Math.random().toString(36).slice(2, 10);
+const esperar = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
 async function pedir(rota, { metodo = "GET", corpo } = {}) {
   let r;
@@ -33,38 +241,232 @@ async function pedir(rota, { metodo = "GET", corpo } = {}) {
   } catch {
     return { status: 0, dados: { erro: "Sem internet ou o painel não respondeu. Tente de novo." } };
   }
-  const dados = await r.json().catch(() => ({}));
-  if (r.status === 401 && rota !== "entrar" && eu) { eu = null; telaEntrar(dados.erro); }
+  const lido = await r.json().catch(() => null);
+  const dados = lido && typeof lido === "object" && !Array.isArray(lido) ? lido : {};
+  // Toda falha tem mensagem, mesmo quando a Netlify responde sem o "erro" (tempo limite, 502; item 28).
+  if (!r.ok && typeof dados.erro !== "string") dados.erro = erroPadrao(rota, r.status, metodo);
+  if (r.status === 401 && rota !== "entrar" && eu) {
+    eu = null;
+    telaEntrar(`${dados.erro} Se você estava digitando, o texto ficou guardado neste aparelho.`);
+  }
   return { status: r.status, dados };
 }
 
 const quando = (ms) => new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(ms);
-const mostrar = (v) => {
-  if (v === undefined || v === null) return "(vazio)";
-  if (typeof v === "boolean") return v ? "Ligado" : "Desligado";
-  if (Array.isArray(v) && v.every((x) => x && "termina" in x)) return `${v.length} campanha(s): ${v.map((x) => `${x.titulo} (até ${String(x.termina).slice(8, 10)}/${String(x.termina).slice(5, 7)}${x.ligada === false ? ", desligada" : ""})`).join(" · ")}`;
-  if (Array.isArray(v)) return `${v.length} vídeo(s): ${v.map((x, i) => `${i + 1}. ${x.titulo || (x.arquivo || "").split("/").pop()}${x.visivel === false ? " (escondido)" : ""}`).join(" · ")}`;
-  return String(v);
-};
 const ehResponsavel = () => eu && (eu.papel === "responsavel" || eu.papel === "admin");
 
 function trocar(...filhos) { estrutura = null; app.replaceChildren(...filhos); window.scrollTo(0, 0); }
-function mensagem(el, texto, tipo = "erro") { el.className = tipo; el.textContent = texto || ""; }
+// Sem texto numa mensagem de erro, diz pelo menos que algo deu errado (item 28). "" limpa a mensagem.
+function mensagem(el, texto, tipo = "erro") {
+  el.className = tipo;
+  el.textContent = texto === undefined && tipo === "erro" ? "Algo deu errado. Tente de novo." : texto || "";
+}
 function ocupado(botao, sim, texto) {
   botao.disabled = sim;
   if (sim) { botao.dataset.texto = botao.textContent; botao.textContent = texto || "Aguarde…"; }
   else if (botao.dataset.texto) botao.textContent = botao.dataset.texto;
 }
 function campo(rotulo, props, ajuda) {
-  const id = "c" + Math.random().toString(36).slice(2, 8);
+  const id = novoId();
   const entrada = h(props.tag || "input", { id, ...props, tag: undefined });
   return { el: h("div", { class: "campo" }, h("label", { for: id, text: rotulo }), entrada, ajuda && h("p", { class: "ajuda", text: ajuda })), entrada };
+}
+const etiqueta = (texto, cor = "") => h("span", { class: `etiqueta ${cor}`, text: texto });
+const botaoInicio = () => h("button", { class: "botao", type: "button", onclick: () => ir("") }, "Voltar ao início");
+
+// ---------- como cada valor aparece na tela (Aprovações, conflitos, Histórico, Publicar, Enviar; itens 4 e 60) ----------
+const enderecoDeImagem = (v) => (String(v).startsWith("foto:") ? `${API}foto?id=${encodeURIComponent(String(v).slice(5))}` : String(v));
+const vazio = (v) => v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length);
+function miniatura(endereco, alt, pequena) {
+  const img = h("img", { class: `miniatura${pequena ? " pequena" : ""}`, src: enderecoDeImagem(endereco), alt, loading: "lazy" });
+  img.addEventListener("error", () => img.classList.add("sem-imagem"));
+  return img;
+}
+
+// Mostra um valor do site para a pessoa. "outro" é o valor do outro lado (antes/depois) e "lado" diz qual é este,
+// para destacar o que mudou: vídeos e campanhas item por item, foto com miniatura.
+function valorNaTela(v, regra, outro, lado = "depois") {
+  const tipo = tipoDoValor(vazio(v) && outro !== undefined ? outro : v, regra);
+  if (tipo === "foto") {
+    if (!v) return h("span", { class: "miudo", text: "(sem foto)" });
+    return h("div", { class: "valor-foto" }, miniatura(v, "Foto"),
+      h("span", { class: "miudo", text: String(v).startsWith("foto:") ? "Foto nova (enviada pelo painel)" : String(v).split("/").pop() }));
+  }
+  if (tipo === "videos") return videosNaTela(v, outro, lado);
+  if (tipo === "campanhas") return campanhasNaTela(v, outro, lado);
+  if (tipo === "lista-de-textos") return textosNaTela(v, outro, lado);
+  if (tipo === "lista") return h("span", { text: Array.isArray(v) && v.length ? `${v.length} item(ns)` : "(nenhum)" });
+  return h("span", { class: "valor-texto", text: textoSimples(v, regra) });
+}
+
+// Lista de frases: cada frase numa linha, com o que entrou, saiu ou mudou em destaque (contrato C1).
+function textosNaTela(v, outro, lado) {
+  const ts = soTextos(v);
+  if (!ts.length) return h("span", { class: "miudo", text: "(nenhuma frase: este bloco não aparece no site)" });
+  const comparar = outro !== undefined;
+  const dif = lado === "antes" ? diferencaDeTextos(v, outro) : diferencaDeTextos(outro, v);
+  const como = lado === "antes" ? dif.comoAntes : dif.comoDepois;
+  const resumo = comparar && lado === "depois" ? resumoDeTextos(dif) : "";
+  return h("div", {},
+    h("p", { class: "miudo", text: `${ts.length} ${ts.length === 1 ? "frase" : "frases"}${resumo ? ` · ${resumo}` : ""}` }),
+    h("ol", { class: "valor-lista valor-frases" }, ts.map((t, i) => h("li", {},
+      h("span", { class: comparar && como[i] !== "igual" ? "mudou" : "", text: t }), " ",
+      comparar && lado === "depois" && como[i] === "entrou" && etiqueta("Nova", "verde"),
+      comparar && lado === "depois" && como[i] === "mudou" && etiqueta("Mudou"),
+      comparar && lado === "antes" && como[i] === "saiu" && etiqueta("Sai", "laranja"),
+      comparar && lado === "antes" && como[i] === "mudou" && etiqueta("Vai mudar")))));
+}
+
+function videosNaTela(v, outro, lado) {
+  const vs = soObjetos(v);
+  if (!vs.length) return h("span", { class: "miudo", text: "(nenhum vídeo)" });
+  const comparar = outro !== undefined;
+  const dif = lado === "antes" ? diferencaDeVideos(v, outro) : diferencaDeVideos(outro, v);
+  const em = (lista, x) => comparar && lista.includes(x);
+  const resumo = comparar && lado === "depois" ? resumoDeVideos(dif) : "";
+  return h("div", {},
+    h("p", { class: "miudo", text: `${vs.length} ${vs.length === 1 ? "vídeo" : "vídeos"}${resumo ? ` · ${resumo}` : ""}` }),
+    h("ol", { class: "valor-lista" }, vs.map((x) => h("li", { class: "valor-item" },
+      x.capa ? miniatura(x.capa, "Capa do vídeo", true) : h("span", { class: "sem-capa", text: "Sem capa" }),
+      h("span", {},
+        // Sem título: o nome do arquivo (vídeo do site) ou "Vídeo novo" (enviado pelo painel), nunca o código "video:…".
+        h("span", { class: em(dif.titulos, x) ? "mudou" : "", text: String(x.titulo || "").trim()
+          || (String(x.arquivo ?? "").startsWith("video:") ? "Vídeo novo (sem título)" : `Vídeo sem título (${String(x.arquivo ?? "").split("/").pop()})`) }), " ",
+        lado === "depois" && em(dif.entraram, x) && etiqueta("Novo", "verde"),
+        lado === "antes" && em(dif.sairam, x) && etiqueta("Sai", "laranja"),
+        !visivelDe(x) && etiqueta(lado === "depois" && em(dif.esconderam, x) ? "Escondido agora" : "Escondido", "cinza"),
+        lado === "depois" && em(dif.apareceram, x) && etiqueta("Volta a aparecer", "verde"),
+        lado === "depois" && em(dif.capas, x) && etiqueta("Capa nova"))))));
+}
+
+function campanhasNaTela(v, outro, lado) {
+  const cs = soObjetos(v);
+  if (!cs.length) return h("span", { class: "miudo", text: "(nenhuma campanha)" });
+  const comparar = outro !== undefined;
+  const dif = lado === "antes" ? diferencaDeCampanhas(v, outro) : diferencaDeCampanhas(outro, v);
+  return h("ol", { class: "valor-lista" }, cs.map((x) => {
+    const par = dif.pares.find((p) => (lado === "antes" ? p.antes : p.depois) === x);
+    const mudaram = comparar && par ? par.mudaram : [];
+    const parte = (k, texto) => h("div", { class: mudaram.includes(k) ? "mudou" : "", text: texto });
+    return h("li", { class: "valor-item campanha" }, h("div", {},
+      h("strong", { class: mudaram.includes("titulo") ? "mudou" : "", text: x.titulo || "(sem título)" }), " ",
+      comparar && lado === "depois" && par?.nova && etiqueta("Nova", "verde"),
+      comparar && lado === "antes" && !par && etiqueta("Sai", "laranja"),
+      parte("texto", `Texto: ${x.texto || "(vazio)"}`),
+      parte("botao", `Botão: ${x.botao || "(vazio)"}`),
+      parte("termina", `Termina: ${x.termina ? dataBR(x.termina) : "(sem data)"}`),
+      parte("ligada", x.ligada === false ? "Desligada no site" : "Ligada no site")));
+  }));
+}
+
+function antesDepois(antes, depois, regra, rotulos = ["Antes", "Depois"]) {
+  return h("div", { class: "antes-depois" },
+    h("div", {}, h("b", { text: rotulos[0] }), valorNaTela(antes, regra, depois, "antes")),
+    h("div", {}, h("b", { text: rotulos[1] }), valorNaTela(depois, regra, antes, "depois")));
+}
+
+// Nome do campo: primeiro o da tela de Conteúdo ("Para quem é · Gloss Brumar Matizado"), que vem com o nome do item;
+// depois o do servidor (que, em publicações antigas, tem a chave: "Para quem é · gloss"; rodada 2 da conferência).
+const itemDeMudanca = (m, mapa) => h("li", {}, h("strong", { text: mapa[m.caminho]?.nome || m.nome || m.caminho }),
+  antesDepois(m.antes, m.depois, mapa[m.caminho]));
+
+// ---------- regras dos campos (tipo e rótulos das escolhas) ----------
+// Vêm com cada campo em /painel/api/conteudo e servem para mostrar cada valor do jeito certo nas telas que só têm o
+// caminho do campo. Não guardam nada da pessoa (o rascunho fica de fora).
+let regrasCache = null; // { dono, mapa, menu }
+function anotarRegras(dados) {
+  const mapa = {};
+  for (const g of dados?.grupos || []) for (const c of g.campos || []) mapa[c.caminho] = { tipo: c.tipo, rotulos: c.rotulos, opcoes: c.opcoes, nome: c.nome, rotulo: c.rotulo };
+  const menu = (dados?.grupos || []).map(({ id, titulo, icone }) => ({ id, titulo, icone }));
+  regrasCache = { dono: eu?.email, mapa, menu };
+}
+// O menu e as telas pedem as regras juntos: um pedido só.
+let conteudoNoCaminho = null; // { dono, promessa }
+function pedirConteudo() {
+  if (!conteudoNoCaminho || conteudoNoCaminho.dono !== eu?.email) {
+    const promessa = pedir("conteudo").then((r) => { if (r.status === 200) anotarRegras(r.dados); return r; });
+    conteudoNoCaminho = { dono: eu?.email, promessa };
+    promessa.then(() => { if (conteudoNoCaminho?.promessa === promessa) conteudoNoCaminho = null; });
+  }
+  return conteudoNoCaminho.promessa;
+}
+async function regras() {
+  if (regrasCache && regrasCache.dono === eu?.email) return regrasCache.mapa;
+  const r = await pedirConteudo();
+  return r.status === 200 && regrasCache ? regrasCache.mapa : {};
+}
+
+// ---------- o que foi mexido e não salvo fica guardado neste aparelho (item 4 da especificação) ----------
+// Vale para todas as telas de edição (campos, campanha, vídeos, foto, recado), por 7 dias. Nunca volta sozinho para o
+// campo nem entra no Salvar de outro campo: a tela mostra "Recuperamos…" com "Usar o que eu tinha digitado" e
+// "Descartar" (itens 11, 25, 27, 32 e 33). "base" = o valor que a tela mostrava quando a pessoa começou a mexer.
+const prefixoGuardado = () => `painel-guardado:${eu ? eu.email : ""}:`;
+const chaveGuardada = (sufixo) => prefixoGuardado() + sufixo;
+function guardarEm(chave, valor, base) {
+  if (!eu || !chave.startsWith(prefixoGuardado())) return; // a pessoa saiu ou outra entrou neste aparelho
+  try { localStorage.setItem(chave, JSON.stringify({ valor, base: JSON.stringify(base ?? null), em: Date.now() })); } catch { /* sem espaço ou bloqueado */ }
+}
+function lerGuardado(chave) {
+  try {
+    const texto = localStorage.getItem(chave);
+    if (texto === null) return null;
+    const g = guardadoValido(texto, Date.now());
+    if (!g) localStorage.removeItem(chave);
+    return g;
+  } catch {
+    return null;
+  }
+}
+function esquecerChave(chave) { try { localStorage.removeItem(chave); } catch { /* nada */ } }
+function limparGuardadosVencidos() {
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith("painel-guardado:") && !guardadoValido(localStorage.getItem(k), Date.now())) localStorage.removeItem(k);
+  } catch { /* sem acesso ao armazenamento do aparelho */ }
+}
+
+// "mesmo": como comparar o guardado com o de agora (a lista de frases ignora caixa vazia e espaços nas pontas).
+function oferecerRecuperacao(chave, { atual, base, aoUsar, mostrar, mesmo = (a, b) => JSON.stringify(a) === JSON.stringify(b) }) {
+  const g = lerGuardado(chave);
+  if (!g) return null;
+  if (mesmo(g.valor, atual)) { esquecerChave(chave); return null; }
+  const usar = h("button", { class: "botao", type: "button" }, "Usar o que eu tinha digitado");
+  const descartar = h("button", { class: "botao claro", type: "button" }, "Descartar");
+  const caixa = h("div", { class: "recuperado", role: "status" },
+    h("p", { class: "sucesso", text: `Recuperamos o que você tinha digitado e não salvou (${quando(g.em)}):` }),
+    h("div", { class: "recuperado-valor" }, mostrar(g.valor)),
+    g.base !== JSON.stringify(base ?? null) && h("p", { class: "erro", text: "Atenção: isto mudou depois que você digitou (no site ou por outra pessoa). Confira antes de usar." }),
+    h("div", { class: "botoes" }, usar, descartar));
+  usar.addEventListener("click", () => { aoUsar(g.valor); caixa.remove(); });
+  descartar.addEventListener("click", () => { esquecerChave(chave); caixa.remove(); });
+  return caixa;
+}
+
+// ---------- foto ou vídeo subindo: avisa antes de sair da tela (item 56) ----------
+let enviosEmAndamento = 0;
+const PERGUNTA_ENVIO = "Um vídeo ou uma foto ainda está subindo. Espere terminar e toque em Salvar. Sair desta tela mesmo assim? (Se terminar de subir, ele fica guardado neste aparelho.)";
+const podeSairDaTela = () => !enviosEmAndamento || confirm(PERGUNTA_ENVIO);
+window.addEventListener("beforeunload", (e) => { if (enviosEmAndamento) { e.preventDefault(); e.returnValue = ""; } });
+
+// O envio terminou, mas a tela dele não está mais na frente (a pessoa saiu ou a tela foi desenhada de novo): o
+// resultado já ficou guardado no aparelho; avisa na tela de agora, com um botão para abrir a tela do campo. Sem isso,
+// ela só via o "Recuperamos…" se voltasse lá por conta própria (item 56).
+function avisarEnvioTerminado(el, frase, rota) {
+  if (!eu || el.isConnected) return;
+  const lugar = estrutura?.meio?.querySelector(".conteudo");
+  if (!lugar) return;
+  const caixa = h("div", { class: "recuperado aviso-envio", role: "status" },
+    h("p", { class: "sucesso", text: `${frase} Para usar, abra a tela, toque em "Usar o que eu tinha digitado" e depois em Salvar.` }),
+    h("div", { class: "botoes" },
+      h("button", { class: "botao", type: "button", onclick: () => ir(rota) }, "Abrir agora"),
+      h("button", { class: "botao claro", type: "button", onclick: () => caixa.remove() }, "Depois")));
+  lugar.prepend(caixa);
 }
 
 // ---------- estrutura do computador: menu à esquerda, telas no meio, prévia do site à direita ----------
 // (pedido de 22/10, inspirado no vídeo de exemplo). No celular, só o meio aparece (CSS).
 let estrutura = null;
 const TELA_LARGA = "(min-width: 1100px)";
+const CELULAR = "(max-width: 759px)";
 let modoPrevia = "celular";
 try { modoPrevia = localStorage.getItem("painel-modo-previa") || "celular"; } catch { /* sem armazenamento */ }
 
@@ -73,10 +475,27 @@ function itemLateral(icone, titulo, rota, acao) {
     h("span", { class: "lateral-icone", "aria-hidden": "true", text: icone }), h("span", { class: "lateral-texto", text: titulo }));
 }
 
+// Menu do celular: fechado, fica fora da leitura de tela e do Tab (inert e aria-hidden); o ☰ diz se está aberto;
+// Esc fecha; ao abrir, o foco vai para o menu e, ao fechar, volta para o ☰ (item 61).
+function menuDoCelular(aberto, { focar = false } = {}) {
+  if (!estrutura) return;
+  const { menu, fundo } = estrutura;
+  menu.classList.toggle("aberto", aberto);
+  fundo.classList.toggle("aberto", aberto);
+  const escondido = window.matchMedia(CELULAR).matches && !aberto;
+  menu.inert = escondido;
+  if (escondido) menu.setAttribute("aria-hidden", "true");
+  else menu.removeAttribute("aria-hidden");
+  estrutura.abrirMenu?.setAttribute("aria-expanded", aberto ? "true" : "false");
+  if (focar) (aberto ? menu.querySelector(".lateral-item") : estrutura.abrirMenu)?.focus();
+}
+window.matchMedia(CELULAR).addEventListener?.("change", () => menuDoCelular(Boolean(estrutura?.menu.classList.contains("aberto"))));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && estrutura?.menu.classList.contains("aberto")) menuDoCelular(false, { focar: true });
+});
+
 function marcarAtivo() {
   if (!estrutura) return;
-  estrutura.menu.classList.remove("aberto");
-  estrutura.fundo?.classList.remove("aberto");
   const atual = decodeURIComponent(location.hash.slice(1));
   for (const b of estrutura.menu.querySelectorAll(".lateral-item")) b.classList.toggle("ativo", b.dataset.rota === atual);
 }
@@ -92,32 +511,68 @@ function ajustarPrevia() {
   for (const b of estrutura.botoesModo) b.classList.toggle("ativo", b.dataset.modo === modoPrevia);
 }
 
+// Parte do site que a prévia mostra: a do grupo aberto (pedido de 26/10). "#conteudo/produtos/gloss" →
+// "produtos:gloss"; "#conteudo/videos/videos-por-produto:gloss" → "videos-por-produto:gloss" (item de um grupo com
+// várias listas); campanha aberta ("#conteudo/campanhas/0") → "campanhas"; fora do Conteúdo → "" (página inicial).
+function focoDaTela() {
+  let endereco;
+  try { endereco = decodeURIComponent(location.hash.slice(1)); } catch { return ""; }
+  const [secao, grupo, item = ""] = endereco.split("/");
+  const pedaco = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+  if (secao !== "conteudo" || !pedaco.test(grupo || "")) return "";
+  const partes = item.split(":");
+  if (partes.length > 1) return partes.length === 2 && partes.every((p) => pedaco.test(p)) ? item : grupo;
+  return pedaco.test(item) && !/^\d+$/.test(item) && item !== "nova" ? `${grupo}:${item}` : grupo;
+}
+
 // Monta (de novo) a prévia: dados do site com o rascunho → previa/previa.js (molde da Opção A ou prévia simplificada)
 // → iframe "srcdoc". Assim a página não precisa ser aberta numa moldura, e as regras de segurança do site
-// (frame-ancestors 'none') continuam fechadas. Chamada ao abrir e depois de Salvar, Descartar ou Publicar.
+// (frame-ancestors 'none') continuam fechadas. Busca os dados ao abrir e depois de Salvar, Descartar ou Publicar;
+// ao trocar de tela, só desenha de novo com o foco novo (focarPrevia), sem pedir os dados outra vez.
+let buscandoPrevia = 0;
 let montandoPrevia = 0;
+let previaResposta = null; // última resposta de /painel/api/previa
+let focoMostrado = null; // foco da última prévia desenhada
 async function atualizarPrevia() {
   const iframe = estrutura?.iframe;
   if (!iframe) return;
-  const vez = ++montandoPrevia; // se pedirem de novo no meio, só a última montagem vale
+  const vez = ++buscandoPrevia; // se pedirem de novo no meio, só a última busca vale
   const r = await pedir("previa");
-  if (vez !== montandoPrevia || estrutura?.iframe !== iframe) return;
+  if (vez !== buscandoPrevia || estrutura?.iframe !== iframe) return;
+  previaResposta = r;
+  await desenharPrevia();
+}
+async function desenharPrevia() {
+  const iframe = estrutura?.iframe;
+  const r = previaResposta;
+  if (!iframe || !r) return;
+  const vez = ++montandoPrevia; // só a última montagem vai para a tela
+  const foco = focoDaTela();
   let html;
   if (r.status !== 200) {
     html = `<!doctype html><meta charset="utf-8"><p style="font-family:sans-serif;padding:16px">${(r.dados.erro || "Não foi possível montar a prévia.").replace(/[<>&]/g, "")}</p>`;
   } else {
-    const base = new URL("previa/", document.baseURI).href;
-    const modulo = await import(new URL("previa.js", base).href);
-    html = await modulo.htmlDaPrevia(r.dados, base);
+    try {
+      const base = new URL("previa/", document.baseURI).href;
+      const modulo = await import(new URL("previa.js", base).href);
+      html = await modulo.htmlDaPrevia(r.dados, base, foco);
+    } catch {
+      html = `<!doctype html><meta charset="utf-8"><p style="font-family:sans-serif;padding:16px">Não foi possível montar a prévia agora.</p>`;
+    }
   }
-  if (vez === montandoPrevia && estrutura?.iframe === iframe) iframe.srcdoc = html;
+  if (vez === montandoPrevia && estrutura?.iframe === iframe) { iframe.srcdoc = html; focoMostrado = foco; }
+}
+// Trocou de tela: a prévia passa a mostrar a parte do site do grupo aberto (Textos → topo, Link na bio → a /bio...).
+function focarPrevia() {
+  if (!estrutura?.iframe || !previaResposta || focoDaTela() === focoMostrado) return;
+  desenharPrevia();
 }
 
 function garantirEstrutura() {
   if (estrutura && app.contains(estrutura.raiz)) return estrutura;
   const recolhido = (() => { try { return localStorage.getItem("painel-menu-recolhido") === "1"; } catch { return false; } })();
   const gruposMenu = h("div", { class: "lateral-grupos" });
-  const menu = h("aside", { class: `lateral${recolhido ? " recolhido" : ""}`, "aria-label": "Menu do painel" },
+  const menu = h("aside", { class: `lateral${recolhido ? " recolhido" : ""}`, id: "menu-painel", "aria-label": "Menu do painel" },
     h("div", { class: "lateral-topo" },
       h("img", { class: "lateral-logo", src: "logo.png", alt: "Brumar Cosméticos" }),
       h("button", { class: "lateral-recolher", type: "button", "aria-label": "Recolher ou abrir o menu", onclick: () => {
@@ -137,10 +592,10 @@ function garantirEstrutura() {
     eu.papel !== "admin" && itemLateral("🔑", "Minha senha", "senha"),
     h("div", { class: "lateral-fim" }, itemLateral("🚪", "Sair", null, sair)));
   const meio = h("div", { class: "meio" });
-  // No celular, o menu abre por cima da tela (☰ no topo) e fecha tocando fora ou escolhendo uma tela.
-  const fundo = h("div", { class: "fundo-menu", onclick: () => { menu.classList.remove("aberto"); fundo.classList.remove("aberto"); } });
+  // No celular, o menu abre por cima da tela (☰ no topo) e fecha tocando fora, com Esc ou escolhendo uma tela.
+  const fundo = h("div", { class: "fundo-menu", onclick: () => menuDoCelular(false, { focar: true }) });
   const raiz = h("div", { class: "grade" }, menu, fundo, meio);
-  estrutura = { raiz, menu, fundo, meio, iframe: null, moldura: null, botoesModo: [] };
+  estrutura = { raiz, menu, fundo, meio, iframe: null, moldura: null, botoesModo: [], abrirMenu: null };
   // A prévia só é montada em tela larga (no celular ela gastaria leituras à toa).
   if (window.matchMedia(TELA_LARGA).matches) {
     const iframe = h("iframe", { class: "previa-iframe", title: "Prévia do site" });
@@ -158,22 +613,28 @@ function garantirEstrutura() {
   }
   app.replaceChildren(raiz);
   setTimeout(ajustarPrevia, 0);
+  previaResposta = null; // prévia de outra entrada (ou de antes de sair) não aparece
+  focoMostrado = null;
   if (estrutura.iframe) atualizarPrevia();
-  pedir("conteudo").then((r) => {
-    if (r.status !== 200) return;
-    gruposMenu.replaceChildren(...r.dados.grupos.map((g) => itemLateral(g.icone || "✏️", g.titulo, `conteudo/${g.id}`)));
+  // Os grupos do menu vêm das regras já lidas (sem pedir de novo ao GitHub) ou de um pedido só.
+  const montarMenu = (grupos) => {
+    gruposMenu.replaceChildren(...grupos.map((g) => itemLateral(g.icone || "✏️", g.titulo, `conteudo/${g.id}`)));
     marcarAtivo();
-  });
+  };
+  if (regrasCache && regrasCache.dono === eu.email) montarMenu(regrasCache.menu);
+  else pedirConteudo().then((r) => { if (r.status === 200) montarMenu(r.dados.grupos); });
   return estrutura;
 }
 
 // ---------- casca (topo com medidor, avisos e rascunho) ----------
 async function casca(...conteudo) {
+  if (!eu) return; // a entrada venceu no meio: a tela de entrar já está na frente
   const medidor = h("div", { class: "medidor" });
   const sino = h("button", { class: "sino", type: "button", "aria-label": "Avisos", onclick: () => ir("avisos") }, "Avisos");
   const faixa = h("div");
-  const abrirMenu = h("button", { class: "abrir-menu", type: "button", "aria-label": "Abrir o menu", onclick: () => {
-    estrutura?.menu.classList.add("aberto"); estrutura?.menu.classList.remove("recolhido"); estrutura?.fundo.classList.add("aberto");
+  const abrirMenu = h("button", { class: "abrir-menu", type: "button", "aria-label": "Abrir o menu", "aria-controls": "menu-painel", "aria-expanded": "false", onclick: () => {
+    estrutura?.menu.classList.remove("recolhido");
+    menuDoCelular(true, { focar: true });
   } }, "☰");
   const topo = h("header", { class: "topo" },
     h("div", { class: "topo-linha" },
@@ -183,10 +644,13 @@ async function casca(...conteudo) {
       h("div", { class: "quem" }, h("strong", { text: eu.nome }), NOMES_PAPEL[eu.papel])),
     medidor);
   const { meio } = garantirEstrutura();
+  estrutura.abrirMenu = abrirMenu;
   meio.replaceChildren(h("div", { class: "casca" }, topo, faixa, h("main", { class: "conteudo" }, ...conteudo)));
   window.scrollTo(0, 0);
   meio.scrollTo?.(0, 0);
+  menuDoCelular(false);
   marcarAtivo();
+  focarPrevia();
 
   const [cota, avisos, rascunho] = await Promise.all([pedir("cota"), pedir("avisos"), pedir("rascunho")]);
   if (cota.status === 200) preencherMedidor(medidor, cota.dados);
@@ -197,7 +661,8 @@ async function casca(...conteudo) {
     faixa.append(h("div", { class: "rascunho" },
       h("span", { text: `${n} ${n === 1 ? "mudança ainda não publicada" : "mudanças ainda não publicadas"}` }),
       h("div", { class: "botoes" },
-        !estrutura?.iframe && h("a", { class: "botao claro", href: "previa/" }, "Ver como fica"),
+        // No celular, a prévia abre na parte do site do grupo aberto (pedido de 26/10).
+        !estrutura?.iframe && h("a", { class: "botao claro", href: focoDaTela() ? `previa/?foco=${encodeURIComponent(focoDaTela())}` : "previa/" }, "Ver como fica"),
         h("button", { class: "botao verde", type: "button", onclick: acao[1] }, acao[0]))));
   }
 }
@@ -215,22 +680,52 @@ function preencherMedidor(el, c) {
 
 const voltar = () => h("button", { class: "voltar", type: "button", onclick: () => ir("") }, "‹ Voltar");
 
+// Falha ao carregar uma tela: mostra o motivo e "Tentar de novo", nunca uma lista vazia como se não houvesse nada (item 59).
+function telaFalhou(titulo, r) {
+  return casca(voltar(), h("h1", { text: titulo }), h("div", { class: "cartao" },
+    h("p", { class: "erro", role: "alert", text: r.dados.erro || "Não foi possível carregar agora. Tente de novo." }),
+    h("button", { class: "botao", type: "button", onclick: () => rotear() }, "Tentar de novo")));
+}
+
+// Aviso no alto da tela que está na frente (ou numa janela, se não houver tela do painel). No celular, fecha o menu
+// (ex.: "Sair" tocado no menu): senão o aviso ficava escondido atrás dele.
+function avisoNaTela(texto) {
+  const lugar = estrutura?.meio?.querySelector(".conteudo");
+  if (!lugar) return alert(texto);
+  if (estrutura.menu.classList.contains("aberto")) menuDoCelular(false, { focar: true });
+  lugar.querySelector(".aviso-geral")?.remove();
+  lugar.prepend(h("p", { class: "erro aviso-geral", role: "alert", text: texto }));
+  window.scrollTo(0, 0);
+}
+
 // ---------- navegação ----------
 // Muda de tela pelo endereço (#acessos, #historico...). Se já estiver nele, o navegador não avisa: desenha direto.
+let hashMostrado = location.hash; // endereço da tela que está na frente (para voltar a ele se a pessoa desistir de sair)
+let saidaConfirmada = false;
 function ir(rota) {
+  if (!podeSairDaTela()) return;
   const atual = location.hash.replace(/^#/, "");
-  if (atual !== rota) location.hash = rota;
+  if (atual !== rota) { saidaConfirmada = true; location.hash = rota; }
   else rotear();
 }
-window.addEventListener("hashchange", rotear);
+window.addEventListener("hashchange", () => {
+  const pode = saidaConfirmada || location.hash === hashMostrado || podeSairDaTela();
+  saidaConfirmada = false;
+  if (!pode) { history.replaceState(null, "", hashMostrado || location.pathname + location.search); return; }
+  rotear();
+});
 
 async function rotear() {
+  hashMostrado = location.hash;
   const hash = decodeURIComponent(location.hash.slice(1));
+  // A cópia do conteúdo só serve para ir de "Conteúdo do site" direto a um grupo (item 24).
+  if (!hash.startsWith("conteudo/")) conteudoCache = null;
   if (hash.startsWith("convite/")) return telaConvite(hash.slice(8));
   if (!eu) {
     const r = await pedir("eu");
-    if (r.status !== 200) return telaEntrar();
+    if (r.status !== 200) return telaEntrar(r.status === 401 ? undefined : r.dados.erro);
     eu = r.dados;
+    limparGuardadosVencidos();
   }
   const telas = { publicar: telaPublicar, enviar: telaEnviar, aprovacoes: telaAprovacoes, historico: telaHistorico,
     acessos: telaAcessos, senha: telaSenha, avisos: telaAvisos, medidor: telaMedidor };
@@ -239,7 +734,7 @@ async function rotear() {
     const [id, ...resto] = hash.slice(9).split("/");
     return telaGrupo(id, resto.join("/"));
   }
-  return (telas[hash] || telaInicio)();
+  return (Object.hasOwn(telas, hash) ? telas[hash] : telaInicio)();
 }
 
 // ---------- entrar ----------
@@ -256,8 +751,13 @@ function telaEntrar(aviso, tipo = "erro") {
     const r = await pedir("entrar", { metodo: "POST", corpo: { email: email.entrada.value, senha: senha.entrada.value } });
     ocupado(botao, false);
     if (r.status !== 200) { senha.entrada.value = ""; return mensagem(msg, r.dados.erro); }
+    conteudoCache = null;
+    regrasCache = null;
     eu = r.dados;
-    ir("");
+    limparGuardadosVencidos();
+    // Volta para a tela em que a pessoa estava quando a entrada venceu (o endereço continua o mesmo; item 27).
+    // Depois de Sair, o endereço foi limpo: vai para o Início.
+    rotear();
   });
   trocar(h("div", { class: "entrada" }, h("img", { class: "topo-logo", src: "logo.png", alt: "Brumar Cosméticos" }), form));
 }
@@ -280,7 +780,7 @@ async function telaConvite(codigo) {
   const botao = h("button", { class: "botao cheio", type: "submit" }, cadastro ? "Criar meu acesso" : "Salvar nova senha");
   const form = h("form", { class: "cartao" },
     h("h1", { text: cadastro ? "Seu acesso ao painel" : "Criar nova senha" }),
-    h("p", { class: "sub", text: cadastro ? `Você vai entrar como ${NOMES_PAPEL[c.papel].toLowerCase()}. Este link funciona uma vez só.` : `Acesso de ${c.email}. Este link funciona uma vez só.` }),
+    h("p", { class: "sub", text: cadastro ? `Você vai entrar como ${(NOMES_PAPEL[c.papel] || "").toLowerCase()}. Este link funciona uma vez só.` : `Acesso de ${c.email}. Este link funciona uma vez só.` }),
     cadastro && nome.el, cadastro && email.el, senha.el, repetir.el, msg, botao);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -290,6 +790,8 @@ async function telaConvite(codigo) {
     const res = await pedir("convite", { metodo: "POST", corpo });
     ocupado(botao, false);
     if (res.status !== 201) return mensagem(msg, res.dados.erro);
+    conteudoCache = null;
+    regrasCache = null;
     eu = res.dados;
     history.replaceState(null, "", location.pathname); // o código não fica no histórico do navegador
     rotear();
@@ -322,39 +824,55 @@ async function telaInicio() {
         h("span", { class: "icone", "aria-hidden": "true", text: "🚪" }),
         h("span", {}, h("strong", { text: "Sair" }), h("small", { text: "Encerrar a entrada neste celular" })))));
 }
+
 // "Sair" só pelo botão (um link com #sair não desconecta ninguém). Apaga também os textos guardados neste aparelho,
 // para a próxima pessoa no mesmo computador não ver o que foi digitado (auditoria 22/10, itens 10 e 11).
-async function sair() {
-  await pedir("sair", { metodo: "POST", corpo: {} });
+// Só diz "Você saiu" quando o servidor confirmou: sem isso, a entrada pode continuar valendo neste aparelho (item 36).
+async function sair(e) {
+  const botao = e && e.currentTarget && e.currentTarget.nodeType === 1 ? e.currentTarget : null;
+  if (enviosEmAndamento && !confirm("Um vídeo ou uma foto ainda está subindo e vai se perder. Sair mesmo assim?")) return;
+  if (botao) botao.disabled = true;
+  const r = await pedir("sair", { metodo: "POST", corpo: {} });
+  if (botao) botao.disabled = false;
+  if (r.status !== 200) {
+    return avisoNaTela("Não foi possível sair agora (sem internet ou o painel não respondeu). Toque em Sair de novo antes de deixar o aparelho.");
+  }
   try {
     for (const k of Object.keys(localStorage)) if (k.startsWith("painel-guardado:")) localStorage.removeItem(k);
   } catch { /* sem acesso ao armazenamento do aparelho */ }
   eu = null;
+  conteudoCache = null;
+  regrasCache = null;
   history.replaceState(null, "", location.pathname);
+  hashMostrado = "";
   telaEntrar("Você saiu do painel.", "sucesso");
 }
 
 // ---------- conteúdo do site (telas montadas a partir do esquema) ----------
-// Texto digitado e ainda não salvo fica guardado neste celular: se a entrada vencer, ele volta (item 4).
-const chaveGuardada = (caminho) => `painel-guardado:${eu.email}:${caminho}`;
-function guardar(caminho, valor) { try { localStorage.setItem(chaveGuardada(caminho), JSON.stringify(valor)); } catch { /* sem espaço ou bloqueado */ } }
-function guardado(caminho) { try { const v = localStorage.getItem(chaveGuardada(caminho)); return v === null ? undefined : JSON.parse(v); } catch { return undefined; } }
-function esquecer(caminho) { try { localStorage.removeItem(chaveGuardada(caminho)); } catch { /* nada */ } }
-
-let conteudoCache = null;
-async function carregarConteudo() {
+// Cópia do conteúdo para a tela do grupo não pedir de novo logo depois de "Conteúdo do site". É de UMA pessoa e vale
+// 10 s; some ao sair, ao entrar, ao publicar e ao ir para qualquer tela fora de "Conteúdo" (item 24).
+let conteudoCache = null; // { dono, em, dados }
+// "deixarCopia": só a tela "Conteúdo do site" deixa a cópia. A tela do grupo lê sempre de novo e não deixa nada
+// (senão, depois de Salvar, a tela seguinte mostrava o valor de antes).
+async function carregarConteudo({ deixarCopia = false } = {}) {
   const r = await pedir("conteudo");
-  conteudoCache = r.status === 200 ? r.dados : null;
+  if (r.status === 200) anotarRegras(r.dados);
+  conteudoCache = deixarCopia && r.status === 200 && eu ? { dono: eu.email, em: Date.now(), dados: r.dados } : null;
   return r;
+}
+function conteudoGuardado() {
+  const c = conteudoCache;
+  conteudoCache = null; // da próxima vez, lê de novo
+  return c && eu && c.dono === eu.email && Date.now() - c.em < 10_000 ? c.dados : null;
 }
 
 async function telaConteudo() {
-  const r = await carregarConteudo();
-  if (r.status !== 200) return casca(voltar(), h("div", { class: "cartao" }, h("p", { class: "erro", text: r.dados.erro })));
+  const r = await carregarConteudo({ deixarCopia: true });
+  if (r.status !== 200) return telaFalhou("Conteúdo do site", r);
   const grupos = r.dados.grupos;
   if (!grupos.length) {
     return casca(voltar(), h("h1", { text: "Conteúdo do site" }),
-      h("div", { class: "cartao" }, h("p", { text: "As telas de textos, fotos, produtos e link na bio chegam junto com o site novo." })));
+      h("div", { class: "cartao" }, h("p", { text: "Ainda não há telas de conteúdo neste painel (as regras do site estão sem grupos). Avise a administradora." })));
   }
   await casca(voltar(), h("h1", { text: "Conteúdo do site" }),
     h("div", { class: "menu" }, grupos.map((g) => {
@@ -386,21 +904,32 @@ async function diminuirFoto(arquivo) {
   throw erroParaPessoa("Não consegui deixar a foto leve o bastante. Tente outra foto.");
 }
 
-function entradaDeFoto(c, valor) {
+// Cada entrada devolve { el, ler, foco, mudou, definir }. "mudou" compara com o valor do começo, do mesmo jeito que
+// a tela mostrou: assim um campo que ninguém mexeu nunca vai no Salvar (itens 31 e 57).
+function entradaDeFoto(c, valor, aoMudar) {
+  const inicial = valor;
   let atual = valor;
-  const previa = h("img", { alt: "", class: "previa-foto" });
-  const nota = h("p", { class: "ajuda", text: valor ? `No site: ${String(valor).split("/").pop()}` : "Ainda sem foto." });
-  const escolher = h("input", { type: "file", accept: "image/*" });
+  const previa = h("img", { alt: "Foto", class: "previa-foto" });
+  previa.addEventListener("error", () => previa.removeAttribute("src"));
+  const nota = h("p", { class: "ajuda" });
+  const escolher = h("input", { type: "file", accept: "image/*", "aria-label": `Escolher foto nova: ${c.nome || "foto"}` });
   const erroFoto = h("p", { class: "erro" });
-  if (typeof valor === "string" && valor.startsWith("foto:")) {
-    previa.src = `${API}foto?id=${encodeURIComponent(valor.slice(5))}`;
-    nota.textContent = "Foto nova salva, ainda não publicada.";
-  }
+  const mostrarAtual = () => {
+    if (typeof atual === "string" && atual) previa.src = enderecoDeImagem(atual);
+    else previa.removeAttribute("src");
+    nota.textContent = !atual ? "Ainda sem foto."
+      : String(atual).startsWith("foto:") ? (atual === inicial ? "Foto nova salva, ainda não publicada." : "Foto pronta. Toque em Salvar.")
+        : `No site: ${String(atual).split("/").pop()}`;
+  };
+  mostrarAtual();
+  const el = h("div", {}, previa, nota, escolher, erroFoto);
   escolher.addEventListener("change", async () => {
     const arquivo = escolher.files[0];
     if (!arquivo) return;
     mensagem(erroFoto, "");
     nota.textContent = "Diminuindo e enviando a foto…";
+    const rota = location.hash.replace(/^#/, ""); // tela deste campo, para o aviso se a pessoa sair antes de terminar
+    enviosEmAndamento++;
     try {
       const leve = await diminuirFoto(arquivo);
       let r;
@@ -413,34 +942,51 @@ function entradaDeFoto(c, valor) {
       atual = dados.valor;
       previa.src = URL.createObjectURL(leve);
       nota.textContent = `Foto pronta (${Math.round(leve.size / 1024)} KB). Toque em Salvar.`;
+      aoMudar?.();
+      avisarEnvioTerminado(el, `A foto de "${c.nome || "Foto"}" terminou de subir e ficou guardada neste aparelho.`, rota);
     } catch (e) {
       nota.textContent = "";
       mensagem(erroFoto, e.paraPessoa ? e.message : "Não foi possível usar esta foto. Tente outra.");
+    } finally {
+      enviosEmAndamento--;
+      escolher.value = "";
     }
   });
-  return { el: h("div", {}, previa, nota, escolher, erroFoto), ler: () => atual, foco: escolher };
+  return { el, ler: () => atual, foco: escolher,
+    // Sem envio, a foto não muda (mesmo sem foto no site; item 31).
+    mudou: () => atual !== inicial, definir: (v) => { atual = v; mostrarAtual(); } };
 }
 
 // Vídeos: a lista inteira é o valor do campo. O celular confere (MP4, até 20 MB), tira a capa de um quadro do
 // próprio vídeo e envia em partes de até 4 MB. Acima de 8 MB, o robô diminui ao publicar.
 const VIDEO_MAX = 20 * 1024 * 1024;
 const VIDEO_PESADO = 8 * 1024 * 1024;
+const PRAZO_CAPA = 8000;
 
+// No iPhone, o vídeo fora da tela às vezes nunca carrega o quadro: cada espera tem prazo de 8 s e, se passar, o
+// vídeo segue sem capa (o campo de escolher vídeo nunca fica travado; item 35).
 async function capaDoVideo(arquivo) {
   const url = URL.createObjectURL(arquivo);
+  const v = h("video", { muted: true, playsinline: true, preload: "auto" });
   try {
-    const v = h("video", { muted: true, playsinline: true, preload: "auto" });
+    v.muted = true;
+    const carregou = new Promise((ok, falhou) => { v.onloadedmetadata = ok; v.onerror = falhou; });
     v.src = url;
-    await new Promise((ok, falhou) => { v.onloadeddata = ok; v.onerror = falhou; });
+    v.load?.();
+    await comPrazo(carregou, PRAZO_CAPA);
+    const buscou = new Promise((ok, falhou) => { v.onseeked = ok; v.onerror = falhou; });
     v.currentTime = Math.min(1, (v.duration || 2) / 2);
-    await new Promise((ok) => { v.onseeked = ok; });
+    await comPrazo(buscou, PRAZO_CAPA);
+    if (!v.videoWidth || !v.videoHeight) return null;
     const escala = Math.min(1, 720 / Math.max(v.videoWidth, v.videoHeight));
     const tela = h("canvas");
     tela.width = Math.round(v.videoWidth * escala);
     tela.height = Math.round(v.videoHeight * escala);
     tela.getContext("2d").drawImage(v, 0, 0, tela.width, tela.height);
-    return await new Promise((ok) => tela.toBlob(ok, "image/jpeg", 0.8));
+    return await comPrazo(new Promise((ok) => tela.toBlob(ok, "image/jpeg", 0.8)), PRAZO_CAPA);
   } finally {
+    v.onloadedmetadata = v.onseeked = v.onerror = null;
+    v.removeAttribute("src");
     URL.revokeObjectURL(url);
   }
 }
@@ -467,34 +1013,36 @@ async function enviarVideo(arquivo, aoAndar) {
   return enviarBinario("video?acao=finalizar", JSON.stringify({ id: ini.id }), "application/json");
 }
 
-const enderecoDaCapa = (capa) => (capa.startsWith("foto:") ? `${API}foto?id=${encodeURIComponent(capa.slice(5))}` : capa);
+// Lista de vídeos como o site entende: vídeo sem "visivel" aparece (item 57).
+const normalizarVideos = (vs) => soObjetos(vs).map((v) => ({ arquivo: String(v.arquivo ?? ""), capa: v.capa || "", titulo: v.titulo || "", visivel: visivelDe(v) }));
 
-function entradaDeVideos(c, valor) {
-  let lista = Array.isArray(valor) ? valor.map((v) => ({ ...v })) : [];
+function entradaDeVideos(c, valor, aoMudar) {
+  let lista = normalizarVideos(valor);
   const caixa = h("div");
-  const nota = h("p", { class: "ajuda" });
+  const nota = h("p", { class: "ajuda", role: "status" });
   const erroVideo = h("p", { class: "erro" });
+  const mexeu = () => aoMudar?.();
   const desenhar = () => {
     caixa.replaceChildren(...lista.map((v, i) => {
-      const titulo = h("input", { type: "text", maxlength: 80, placeholder: "Título (opcional)" });
+      const titulo = h("input", { type: "text", maxlength: 80, placeholder: "Título (opcional)", "aria-label": `Título do vídeo ${i + 1}` });
       titulo.value = v.titulo || "";
-      titulo.addEventListener("input", () => { v.titulo = titulo.value; });
-      const visivel = h("input", { type: "checkbox", checked: v.visivel });
-      visivel.addEventListener("change", () => { v.visivel = visivel.checked; });
-      const mover = (passo) => { const j = i + passo; if (j < 0 || j >= lista.length) return; [lista[i], lista[j]] = [lista[j], lista[i]]; desenhar(); };
+      titulo.addEventListener("input", () => { v.titulo = titulo.value; mexeu(); });
+      const visivel = h("input", { type: "checkbox", checked: v.visivel !== false });
+      visivel.addEventListener("change", () => { v.visivel = visivel.checked; mexeu(); });
+      const mover = (passo) => { const j = i + passo; if (j < 0 || j >= lista.length) return; [lista[i], lista[j]] = [lista[j], lista[i]]; desenhar(); mexeu(); };
       return h("div", { class: "video-item" },
-        v.capa ? h("img", { class: "previa-foto", alt: "", src: enderecoDaCapa(v.capa) }) : h("div", { class: "miudo", text: "Sem capa" }),
+        v.capa ? h("img", { class: "previa-foto", alt: `Capa do vídeo ${i + 1}`, src: enderecoDeImagem(v.capa) }) : h("div", { class: "miudo", text: "Sem capa" }),
         h("div", { class: "miudo", text: v.arquivo.startsWith("video:") ? "Vídeo novo (vai ao site ao publicar)" : v.arquivo.split("/").pop() }),
         titulo,
         h("label", { class: "escolha" }, visivel, h("span", { text: "Aparece no site" })),
         h("div", { class: "botoes" },
-          h("button", { class: "botao claro", type: "button", disabled: i === 0, onclick: () => mover(-1) }, "↑ Subir"),
-          h("button", { class: "botao claro", type: "button", disabled: i === lista.length - 1, onclick: () => mover(1) }, "↓ Descer"),
-          h("button", { class: "botao perigo", type: "button", onclick: () => { lista.splice(i, 1); desenhar(); } }, "Tirar")));
+          h("button", { class: "botao claro", type: "button", disabled: i === 0, "aria-label": `Subir o vídeo ${i + 1}`, onclick: () => mover(-1) }, "↑ Subir"),
+          h("button", { class: "botao claro", type: "button", disabled: i === lista.length - 1, "aria-label": `Descer o vídeo ${i + 1}`, onclick: () => mover(1) }, "↓ Descer"),
+          h("button", { class: "botao perigo", type: "button", "aria-label": `Tirar o vídeo ${i + 1}`, onclick: () => { lista.splice(i, 1); desenhar(); mexeu(); } }, "Tirar")));
     }));
     if (!lista.length) caixa.append(h("p", { class: "miudo", text: "Nenhum vídeo. No site aparece \"Em breve\"." }));
   };
-  const escolher = h("input", { type: "file", accept: "video/mp4" });
+  const escolher = h("input", { type: "file", accept: "video/mp4", id: novoId() });
   escolher.addEventListener("change", async () => {
     const arquivo = escolher.files[0];
     escolher.value = "";
@@ -503,72 +1051,88 @@ function entradaDeVideos(c, valor) {
     if (arquivo.type && arquivo.type !== "video/mp4") return mensagem(erroVideo, "Use vídeo MP4. No iPhone: Ajustes > Câmera > Formatos > Mais Compatível.");
     if (arquivo.size > VIDEO_MAX) return mensagem(erroVideo, "Vídeo acima de 20 MB. Corte ou diminua o vídeo no celular e tente de novo.");
     escolher.disabled = true;
+    const rota = location.hash.replace(/^#/, ""); // tela deste campo, para o aviso se a pessoa sair antes de terminar
+    enviosEmAndamento++;
     try {
       nota.textContent = "Tirando a capa do vídeo…";
       let capa = "";
       try {
         const imagem = await capaDoVideo(arquivo);
         if (imagem) capa = (await enviarBinario("foto", imagem, imagem.type)).valor;
-      } catch { /* sem capa: o vídeo continua valendo */ }
+      } catch (e) {
+        if (!eu) throw e; // a entrada venceu: para aqui
+        /* sem capa: o vídeo continua valendo */
+      }
       const enviado = await enviarVideo(arquivo, (p) => { nota.textContent = `Enviando o vídeo… ${p}%`; });
       lista.push({ arquivo: enviado.valor, capa, titulo: "", visivel: true });
       desenhar();
-      const mb = enviado.megas.toLocaleString("pt-BR");
+      mexeu(); // fica guardado no aparelho mesmo se a pessoa já tiver saído desta tela
+      const mb = Number(enviado.megas || 0).toLocaleString("pt-BR");
       nota.textContent = enviado.pesado
         ? `Vídeo pesado (${mb} MB): ao publicar, o robô diminui para até 8 MB. Toque em Salvar.`
         : `Vídeo pronto (${mb} MB). Toque em Salvar.`;
+      avisarEnvioTerminado(el, `O vídeo de "${c.nome || "Vídeos"}" terminou de subir e ficou guardado neste aparelho.`, rota);
     } catch (e) {
       nota.textContent = "";
       mensagem(erroVideo, e.paraPessoa ? e.message : "Não foi possível usar este vídeo. Tente outro.");
     } finally {
+      enviosEmAndamento--;
       escolher.disabled = false;
     }
   });
   desenhar();
-  const ler = () => lista.map(({ arquivo, capa, titulo, visivel }) => ({ arquivo, capa: capa || "", titulo: (titulo || "").trim(), visivel: visivel === true }));
+  const ler = () => lista.map(({ arquivo, capa, titulo, visivel }) => ({ arquivo, capa: capa || "", titulo: (titulo || "").trim(), visivel: visivel !== false }));
+  const inicial = JSON.stringify(ler());
+  const el = h("div", {}, caixa, h("label", { class: "rotulo", for: escolher.id, text: "+ Adicionar vídeo (MP4, até 20 MB)" }), escolher, nota, erroVideo,
+    h("p", { class: "ajuda", text: "Cada vez que uma cliente dá play, a Netlify gasta créditos pelo tamanho do vídeo (um vídeo de 8 MB gasta uns 0,16 crédito)." }));
   return {
-    el: h("div", {}, caixa, h("p", { class: "rotulo", text: "+ Adicionar vídeo (MP4, até 20 MB)" }), escolher, nota, erroVideo,
-      h("p", { class: "ajuda", text: "Cada vez que uma cliente dá play, a Netlify gasta créditos pelo tamanho do vídeo (um vídeo de 8 MB gasta uns 0,16 crédito)." })),
-    ler, foco: escolher, lista: true,
+    el, ler, foco: escolher, lista: true,
+    mudou: () => JSON.stringify(ler()) !== inicial,
+    definir: (v) => { lista = normalizarVideos(v); desenhar(); },
   };
 }
 
 // Campanhas: várias ao mesmo tempo (pedido de 22/10). A lista inteira é o valor do campo.
-function entradaDeCampanhas(c, valor) {
-  const lista = Array.isArray(valor) ? valor.map((x) => ({ ...x })) : [];
+// (Só aparece aqui se o grupo tiver outros campos junto; o grupo só de campanhas usa a lista com Editar/Excluir.)
+function entradaDeCampanhas(c, valor, aoMudar) {
+  const normalizar = (v) => soObjetos(v).map((x) => ({ titulo: x.titulo || "", texto: x.texto || "", botao: x.botao || "", termina: x.termina || "", ligada: x.ligada !== false }));
+  let lista = normalizar(valor);
   const max = c.max || 6;
   const caixa = h("div");
   const erroLista = h("p", { class: "erro" });
+  const mexeu = () => aoMudar?.();
   const etiquetaDe = (x) => {
     const fim = x.termina ? new Date(`${x.termina}:00-03:00`) : null;
     if (!fim) return ["Falta a data", "laranja"];
     if (fim < new Date()) return ["Terminou", "cinza"];
     if (x.ligada === false) return ["Desligada", "cinza"];
-    return [`No ar até ${x.termina.slice(8, 10)}/${x.termina.slice(5, 7)} às ${x.termina.slice(11, 13)}h${x.termina.slice(14, 16)}`, "verde"];
+    return [`No ar até ${dataBR(x.termina)}`, "verde"];
   };
   const desenhar = () => {
     caixa.replaceChildren(...lista.map((x, i) => {
       const [rotulo, cor] = etiquetaDe(x);
       const texto = (nome, chave, maxLetras) => {
-        const e = h("input", { type: "text", maxlength: maxLetras });
+        const id = novoId();
+        const e = h("input", { type: "text", maxlength: maxLetras, id });
         e.value = x[chave] || "";
-        e.addEventListener("input", () => { x[chave] = e.value; });
-        return h("div", { class: "campo" }, h("span", { class: "rotulo", text: nome }), e);
+        e.addEventListener("input", () => { x[chave] = e.value; mexeu(); });
+        return h("div", { class: "campo" }, h("label", { class: "rotulo", for: id, text: nome }), e);
       };
-      const fim = h("input", { type: "datetime-local" });
+      const idFim = novoId();
+      const fim = h("input", { type: "datetime-local", id: idFim });
       fim.value = x.termina || "";
-      fim.addEventListener("change", () => { x.termina = fim.value; desenhar(); });
+      fim.addEventListener("change", () => { x.termina = fim.value; desenhar(); mexeu(); });
       const ligada = h("input", { type: "checkbox", checked: x.ligada !== false });
-      ligada.addEventListener("change", () => { x.ligada = ligada.checked; desenhar(); });
+      ligada.addEventListener("change", () => { x.ligada = ligada.checked; desenhar(); mexeu(); });
       return h("div", { class: "video-item" },
         h("div", { class: "botoes" }, h("strong", { text: x.titulo || "Campanha nova" }), h("span", { class: `etiqueta ${cor}`, text: rotulo })),
         texto("Título", "titulo", 40), texto("Texto (ex.: até 30% OFF com cupom)", "texto", 60), texto("Texto do botão", "botao", 30),
-        h("div", { class: "campo" }, h("span", { class: "rotulo", text: "Termina em (horário de Brasília) · obrigatório" }), fim,
+        h("div", { class: "campo" }, h("label", { class: "rotulo", for: idFim, text: "Termina em (horário de Brasília) · obrigatório" }), fim,
           h("p", { class: "ajuda", text: "A contagem regressiva some sozinha nessa hora." })),
         h("label", { class: "escolha" }, ligada, h("span", { text: "Ligada no site" })),
         h("div", { class: "botoes" },
-          h("button", { class: "botao claro", type: "button", disabled: i === 0, onclick: () => { [lista[i - 1], lista[i]] = [lista[i], lista[i - 1]]; desenhar(); } }, "↑ Subir"),
-          h("button", { class: "botao perigo", type: "button", onclick: () => { if (confirm(`Tirar a campanha "${x.titulo || "nova"}"?`)) { lista.splice(i, 1); desenhar(); } } }, "Tirar")));
+          h("button", { class: "botao claro", type: "button", disabled: i === 0, onclick: () => { [lista[i - 1], lista[i]] = [lista[i], lista[i - 1]]; desenhar(); mexeu(); } }, "↑ Subir"),
+          h("button", { class: "botao perigo", type: "button", onclick: () => { if (confirm(`Tirar a campanha "${x.titulo || "nova"}"?`)) { lista.splice(i, 1); desenhar(); mexeu(); } } }, "Tirar")));
     }));
     if (!lista.length) caixa.append(h("p", { class: "miudo", text: "Nenhuma campanha. Toque em \"+ Adicionar campanha\"." }));
   };
@@ -578,39 +1142,184 @@ function entradaDeCampanhas(c, valor) {
     if (lista.length >= max) return mensagem(erroLista, `No máximo ${max} campanhas ao mesmo tempo.`);
     lista.push({ titulo: "", texto: "", botao: "", termina: "", ligada: true });
     desenhar();
+    mexeu();
   });
   desenhar();
   const ler = () => lista.map(({ titulo, texto, botao, termina, ligada }) => ({ titulo: (titulo || "").trim(), texto: (texto || "").trim(), botao: (botao || "").trim(), termina: termina || "", ligada: ligada !== false }));
+  const inicial = JSON.stringify(ler());
   return { el: h("div", {}, caixa, adicionar, erroLista,
-    h("p", { class: "ajuda", text: "Só anuncie desconto que já existe na Yampi, com a mesma data de término." })), ler, foco: adicionar, lista: true };
+    h("p", { class: "ajuda", text: "Só anuncie desconto que já existe na Yampi, com a mesma data de término." })), ler, foco: adicionar, lista: true,
+  mudou: () => JSON.stringify(ler()) !== inicial, definir: (v) => { lista = normalizar(v); desenhar(); } };
 }
 
-function entradaDoCampo(c, valor) {
-  if (c.tipo === "campanhas") return entradaDeCampanhas(c, valor);
-  if (c.tipo === "foto") return entradaDeFoto(c, valor);
-  if (c.tipo === "videos") return entradaDeVideos(c, valor);
+// Lista de frases (destaques, para quem é, cuidados, modo de usar; contrato C1): cada frase numa caixa com o contador
+// de letras, Subir/Descer, Remover e "+ Acrescentar frase", com quantas frases cabem à vista. O valor vai caixa por
+// caixa, como está na tela: o servidor tira as vazias e os espaços e, num erro, diz "a frase 3" pela posição da
+// caixa. "mudou" e o "Recuperamos…" comparam a lista limpa (uma caixa vazia a mais não é mudança). Lista vazia vale:
+// o bloco some no site.
+const textosDe = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : typeof v === "string" && v.trim() ? [v] : []);
+// Como o servidor limpa: uma frase é uma linha só (quebra de linha vira espaço), sem espaços nas pontas, e frase vazia sai.
+const frasesLimpas = (v) => textosDe(v).map((t) => t.replace(/\s*[\r\n]+\s*/g, " ").trim()).filter(Boolean);
+function entradaDeListaDeTextos(c, valor, aoMudar) {
+  const { itens: maxItens, letras: maxLetras } = limitesDaLista(c);
+  let lista = textosDe(valor);
+  const caixa = h("div", { class: "frases" });
+  const quantas = h("p", { class: "ajuda frases-quantas", "aria-live": "polite" });
+  const erroLista = h("p", { class: "erro" });
+  const acrescentar = h("button", { class: "botao claro", type: "button" }, "+ Acrescentar frase");
+  const mexeu = () => aoMudar?.();
+  let caixas = []; // { area, subir, descer, remover } de cada frase, na ordem da tela
+  // foco: { frase, botao: "texto" | "subir" | "descer" | "remover" }. Subir, Descer e Remover deixam o foco num botão
+  // (no celular, o foco na caixa de texto abria o teclado a cada toque e a página pulava); só "+ Acrescentar frase"
+  // põe o foco na caixa, onde a pessoa vai digitar (rodada 2 da conferência).
+  const desenhar = (foco = null) => {
+    caixas = [];
+    caixa.replaceChildren(...lista.map((t, i) => {
+      const id = novoId();
+      const letras = h("p", { class: "ajuda", id: `${id}-letras` });
+      const area = h("textarea", { id, class: "frase-texto", rows: 2, maxlength: maxLetras, "aria-describedby": letras.id });
+      area.value = t;
+      // Frase do site maior que o limite (o navegador não corta o que já estava lá): o contador fica vermelho.
+      const contar = () => {
+        letras.textContent = `${area.value.length} de ${maxLetras} letras`;
+        letras.className = area.value.length > maxLetras ? "erro" : "ajuda";
+      };
+      contar();
+      area.addEventListener("input", () => { lista[i] = area.value; area.removeAttribute("aria-invalid"); contar(); ajustarAltura(area); mexeu(); });
+      // Enter não quebra a linha (no site, cada frase é uma linha só).
+      area.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+      const mover = (passo, botao) => {
+        const j = i + passo;
+        if (j < 0 || j >= lista.length) return;
+        [lista[i], lista[j]] = [lista[j], lista[i]];
+        desenhar({ frase: j, botao });
+        mexeu();
+      };
+      // Frase com texto: pergunta antes de tirar (um toque errado no celular apagaria o que foi escrito).
+      const remover = () => {
+        if (lista[i].trim() && !confirm(`Remover a frase ${i + 1}?\n"${lista[i].trim()}"`)) return;
+        lista.splice(i, 1);
+        desenhar({ frase: Math.min(i, lista.length - 1), botao: "remover" });
+        mexeu();
+      };
+      const subir = h("button", { class: "botao claro", type: "button", disabled: i === 0, "aria-label": `Subir a frase ${i + 1}`, onclick: () => mover(-1, "subir") }, "↑ Subir");
+      const descer = h("button", { class: "botao claro", type: "button", disabled: i === lista.length - 1, "aria-label": `Descer a frase ${i + 1}`, onclick: () => mover(1, "descer") }, "↓ Descer");
+      const tirar = h("button", { class: "botao perigo", type: "button", "aria-label": `Remover a frase ${i + 1}`, onclick: remover }, "Remover");
+      caixas.push({ area, subir, descer, remover: tirar });
+      return h("div", { class: "frase" },
+        h("label", { class: "rotulo", for: id, text: `Frase ${i + 1}` }), area, letras, h("div", { class: "botoes" }, subir, descer, tirar));
+    }));
+    if (!lista.length) caixa.append(h("p", { class: "miudo", text: "Nenhuma frase. No site, este bloco não aparece." }));
+    quantas.textContent = `${lista.length} de ${maxItens} frases${lista.length >= maxItens ? " (o máximo)" : ""}`;
+    acrescentar.disabled = lista.length >= maxItens;
+    // A caixa cresce com a frase depois de entrar na tela (antes disso o navegador não sabe a altura do texto).
+    setTimeout(() => { for (const x of caixas) ajustarAltura(x.area); }, 0);
+    if (!foco) return;
+    const x = caixas[foco.frase];
+    // O mesmo botão na posição nova; se ele ficou desligado (a frase chegou na ponta), o outro botão da frase.
+    const alvo = !x ? acrescentar : foco.botao === "texto" ? x.area : [x[foco.botao], x.subir, x.descer, x.remover].find((b) => b && !b.disabled);
+    alvo?.focus();
+  };
+  acrescentar.addEventListener("click", () => {
+    mensagem(erroLista, "");
+    if (lista.length >= maxItens) return mensagem(erroLista, `No máximo ${maxItens} frases.`);
+    lista.push("");
+    desenhar({ frase: lista.length - 1, botao: "texto" });
+    mexeu();
+  });
+  desenhar();
+  const ler = () => [...lista];
+  const inicial = JSON.stringify(frasesLimpas(lista));
+  // Erro do servidor que cita "a frase N": marca a caixa N (aria-invalid) e devolve ela, para a tela levar o foco até
+  // lá (rodada 2 da conferência). Sem número, a lista toda (o botão de acrescentar). marcarErro(null) só desmarca.
+  const marcarErro = (texto) => {
+    for (const x of caixas) x.area.removeAttribute("aria-invalid");
+    if (!texto) return null;
+    const n = Number(/\bfrase (\d+)/.exec(String(texto))?.[1]);
+    const x = caixas[n - 1];
+    if (!x) return acrescentar;
+    x.area.setAttribute("aria-invalid", "true");
+    return x.area;
+  };
+  return { el: h("div", {}, caixa, quantas, acrescentar, erroLista), ler, foco: acrescentar, lista: true, marcarErro,
+    mudou: () => JSON.stringify(frasesLimpas(lista)) !== inicial, definir: (v) => { lista = textosDe(v); desenhar(); },
+    mesmo: (a, b) => JSON.stringify(frasesLimpas(a)) === JSON.stringify(frasesLimpas(b)) };
+}
+
+// A caixa da frase cresce com o texto: com 2 linhas fixas, no celular a maioria das frases ficava cortada e era
+// preciso rolar dentro de uma caixinha (rodada 2 da conferência). Nunca fica menor que as 2 linhas do "rows".
+function ajustarAltura(area) {
+  if (!area.isConnected) return;
+  area.style.height = "0px";
+  const texto = area.scrollHeight; // altura do texto (com o espaço de dentro)
+  area.style.height = "";
+  if (texto > area.clientHeight) area.style.height = `${texto + area.offsetHeight - area.clientHeight}px`;
+}
+// Celular virado (a largura muda e as linhas também).
+window.addEventListener("resize", () => { for (const a of app.querySelectorAll("textarea.frase-texto")) ajustarAltura(a); });
+
+function entradaDoCampo(c, valor, aoMudar) {
+  if (c.tipo === "lista-de-textos") return entradaDeListaDeTextos(c, valor, aoMudar);
+  if (c.tipo === "campanhas") return entradaDeCampanhas(c, valor, aoMudar);
+  if (c.tipo === "foto") return entradaDeFoto(c, valor, aoMudar);
+  if (c.tipo === "videos") return entradaDeVideos(c, valor, aoMudar);
   if (c.tipo === "ligado") {
     const caixa = h("input", { type: "checkbox", checked: valor === true });
     const texto = h("span", { text: valor === true ? "Ligado" : "Desligado" });
-    caixa.addEventListener("change", () => { texto.textContent = caixa.checked ? "Ligado" : "Desligado"; });
-    return { el: h("label", { class: "escolha" }, caixa, texto), ler: () => caixa.checked, foco: caixa };
+    const mostrar = () => { texto.textContent = caixa.checked ? "Ligado" : "Desligado"; };
+    caixa.addEventListener("change", () => { mostrar(); aoMudar?.(); });
+    return { el: h("label", { class: "escolha" }, caixa, texto), ler: () => caixa.checked, foco: caixa,
+      mudou: () => caixa.checked !== (valor === true), definir: (v) => { caixa.checked = v === true; mostrar(); } };
   }
   if (c.tipo === "escolha") {
-    const sel = h("select", {}, c.opcoes.map((o) => h("option", { value: o, selected: o === valor, text: (c.rotulos && c.rotulos[o]) || o })));
-    return { el: sel, ler: () => sel.value, foco: sel };
+    const opcoes = Array.isArray(c.opcoes) ? c.opcoes : [];
+    const naLista = opcoes.findIndex((o) => o === valor);
+    // Valor do site fora das opções (ou faltando): começa em "(escolha uma opção)" e só vai no Salvar se a pessoa
+    // escolher de fato (item 31). As opções vão pela posição: valem texto, número ou sim/não.
+    const sel = h("select", {}, naLista < 0 && h("option", { value: "", text: "(escolha uma opção)" }),
+      opcoes.map((o, i) => h("option", { value: String(i), text: (c.rotulos && c.rotulos[o]) ?? String(o) })));
+    sel.value = naLista < 0 ? "" : String(naLista);
+    const ler = () => (sel.value === "" ? undefined : opcoes[Number(sel.value)]);
+    sel.addEventListener("change", () => aoMudar?.());
+    return { el: sel, ler, foco: sel, mudou: () => sel.value !== "" && ler() !== valor,
+      definir: (v) => { const i = opcoes.findIndex((o) => o === v); if (i >= 0) sel.value = String(i); } };
   }
-  const props = c.tipo === "data" ? { type: "datetime-local" } : c.tipo === "link" ? { type: "url", inputmode: "url" } : {};
+  const props = c.tipo === "data" ? { type: "datetime-local" }
+    : c.tipo === "link" ? { type: "url", inputmode: "url", placeholder: "https://… ou um atalho do site, como /loja/" } : {};
   const grande = c.tipo === "texto" && c.max > 100;
   const entrada = h(grande ? "textarea" : "input", { ...(grande ? {} : { type: "text", ...props }), maxlength: c.max });
   entrada.value = valor === undefined || valor === null ? "" : String(valor);
-  return { el: entrada, ler: () => entrada.value, foco: entrada, texto: true };
+  const inicial = entrada.value; // como o navegador mostra (quebras de linha, data)
+  entrada.addEventListener("input", () => aoMudar?.());
+  return { el: entrada, ler: () => entrada.value, foco: entrada, texto: true, mudou: () => entrada.value !== inicial,
+    definir: (v) => { entrada.value = v === undefined || v === null ? "" : String(v); } };
+}
+
+// ---------- salvar sem apagar a mudança de outra pessoa (item 26; contrato C3) ----------
+// Antes de salvar, confere no rascunho se alguém mudou (ou publicou, ou descartou) os mesmos campos depois que a tela
+// abriu. Se mudou, pergunta. Devolve os "vistos" ({ caminho: em que a tela viu, ou null }) para mandar no Salvar,
+// false (recarregar a tela com a versão nova) ou null (parar: a entrada venceu). O servidor confere o "visto" de
+// novo na hora de gravar: se alguém salvou entre a conferência e o Salvar, ele recusa (409) sem gravar nada.
+async function podeSalvarPorCima(itens) {
+  const vistos = Object.fromEntries(itens.map((x) => [x.caminho, x.em ?? null]));
+  const r = await pedir("rascunho");
+  if (r.status === 401) return null;
+  if (r.status !== 200) return vistos; // sem como conferir agora: o servidor confere pelo "visto"
+  const mudados = mudaramDesde(itens, r.dados.mudancas);
+  if (!mudados.length) return vistos;
+  const linhas = mudados.map((x) => {
+    const m = r.dados.mudancas?.[x.caminho];
+    return m ? `• ${x.nome}: salvo por ${m.por} em ${quando(m.em)}` : `• ${x.nome}: publicado ou descartado depois que você abriu a tela`;
+  });
+  if (!confirm(`Isto mudou depois que você abriu a tela:\n${linhas.join("\n")}\n\nOK: salvar o seu por cima (o que está lá agora some).\nCancelar: ver a versão nova (o que você mexeu fica guardado neste aparelho).`)) return false;
+  // Quis salvar por cima: o "visto" passa a ser o que ela acabou de ver (se mudar de novo, o servidor recusa).
+  for (const x of mudados) vistos[x.caminho] = r.dados.mudancas?.[x.caminho]?.em ?? null;
+  return vistos;
 }
 
 // ---------- listas (pedido de 22/10, como no vídeo de exemplo) ----------
 // Campanhas: lista com "+ Adicionar" no canto e Editar/Excluir em cada linha. Produtos e vídeos: lista dos itens,
 // cada um com Editar (não dá para criar nem apagar produto: eles vêm da Yampi e do site).
-const etiqueta = (texto, cor) => h("span", { class: `etiqueta ${cor}`, text: texto });
-const dataCurta = (t) => (t ? `${t.slice(8, 10)}/${t.slice(5, 7)} às ${t.slice(11, 13)}h${t.slice(14, 16)}` : "sem data");
 function situacaoDaCampanha(x) {
   if (!x.termina) return etiqueta("Falta a data", "laranja");
   if (new Date(`${x.termina}:00-03:00`) < new Date()) return etiqueta("Terminou", "cinza");
@@ -618,19 +1327,42 @@ function situacaoDaCampanha(x) {
   return etiqueta("No ar", "verde");
 }
 const cabecalhoLista = (titulo, botao) => h("div", { class: "titulo-lista" }, h("h1", { text: titulo }), botao);
-const tabela = (colunas, linhas) => h("div", { class: "tabela-rolagem" }, h("table", { class: "tabela" },
-  h("thead", {}, h("tr", {}, colunas.map((c) => h("th", { text: c })))), h("tbody", {}, linhas)));
+// No celular estreito, cada linha vira um cartão (CSS) e o nome da coluna aparece antes do valor: assim os botões
+// Editar/Excluir (com 44 px para o dedo) não ficam escondidos para o lado (item 61).
+function tabela(colunas, linhas) {
+  for (const tr of linhas) Array.from(tr.children).forEach((td, i) => td.setAttribute("data-rotulo", colunas[i] || ""));
+  return h("div", { class: "tabela-rolagem" }, h("table", { class: "tabela" },
+    h("thead", {}, h("tr", {}, colunas.map((c) => h("th", { text: c })))), h("tbody", {}, linhas)));
+}
 
+// true = salvo; { recarregar, aviso } = outra pessoa mudou e a tela mostra a versão nova (com o aviso, se o servidor
+// recusou pelo "visto"); false = não salvou.
 async function salvarCampo(campo, valor, msg) {
-  const res = await pedir("rascunho", { metodo: "POST", corpo: { mudancas: [{ caminho: campo.caminho, valor, antes: campo.noSite }] } });
+  const vistos = await podeSalvarPorCima([{ caminho: campo.caminho, em: campo.rascunho?.em, nome: campo.nome }]);
+  if (vistos === null) return false;
+  if (!vistos) return { recarregar: true, aviso: "" };
+  const res = await pedir("rascunho", { metodo: "POST", corpo: { mudancas: [{ caminho: campo.caminho, valor, antes: campo.noSite, visto: vistos[campo.caminho] }] } });
+  if (outraPessoaMudou(res)) return { recarregar: true, aviso: res.dados.erro };
   if (res.status !== 200) { mensagem(msg, (res.dados.campos || [])[0]?.erro || res.dados.erro); return false; }
   atualizarPrevia();
   return true;
 }
 
-async function telaListaCampanhas(grupo) {
+// "Voltar ao que está no site" de um campo, com o "em" que a tela viu (contrato C3): se outra pessoa salvou o campo
+// depois, o servidor recusa (409) e nada é descartado. Sem o "em" (undefined), vai sem a conferência.
+const descartarCampo = (caminho, visto) => pedir("rascunho", { metodo: "DELETE", corpo: { caminhos: [caminho], ...(visto !== undefined && { visto }) } });
+
+const listaDoCampo = (campo) => {
+  const v = campo.rascunho ? campo.rascunho.valor : campo.noSite;
+  return Array.isArray(v) ? v.map((x) => ({ ...x })) : [];
+};
+
+// Aviso no alto da tela que acabou de ser desenhada de novo (ex.: "Outra pessoa mudou isto agora há pouco").
+const avisoNoAlto = (aviso) => aviso && h("p", { class: "erro", role: "alert", text: aviso });
+
+async function telaListaCampanhas(grupo, aviso = "") {
   const campo = grupo.campos[0];
-  const lista = Array.isArray(campo.rascunho ? campo.rascunho.valor : campo.noSite) ? (campo.rascunho ? campo.rascunho.valor : campo.noSite) : [];
+  const lista = listaDoCampo(campo);
   const msg = h("p", { class: "erro" });
   const max = campo.max || 6;
   const adicionar = h("button", { class: "botao verde", type: "button", onclick: () => {
@@ -638,24 +1370,29 @@ async function telaListaCampanhas(grupo) {
     ir(`conteudo/${grupo.id}/nova`);
   } }, "+ Adicionar");
   const linhas = lista.map((x, i) => {
-    const excluir = h("button", { class: "acao perigo", type: "button", title: "Excluir", "aria-label": `Excluir ${x.titulo}` }, "🗑️ Excluir");
+    const excluir = h("button", { class: "acao perigo", type: "button", "aria-label": `Excluir a campanha ${x.titulo}` }, "🗑️ Excluir");
     excluir.addEventListener("click", async () => {
       if (!confirm(`Excluir a campanha "${x.titulo}"? Ela sai do site na próxima publicação.`)) return;
-      if (await salvarCampo(campo, lista.filter((_, j) => j !== i), msg)) telaGrupo(grupo.id);
+      ocupado(excluir, true);
+      const r = await salvarCampo(campo, lista.filter((_, j) => j !== i), msg);
+      ocupado(excluir, false);
+      if (r) telaGrupo(grupo.id, "", r.aviso);
     });
     return h("tr", {},
       h("td", {}, h("strong", { text: x.titulo }), x.texto && h("div", { class: "miudo", text: x.texto })),
-      h("td", { text: dataCurta(x.termina) }),
+      h("td", { text: x.termina ? dataBR(x.termina) : "sem data" }),
       h("td", {}, situacaoDaCampanha(x)),
-      h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", onclick: () => ir(`conteudo/${grupo.id}/${i}`) }, "✏️ Editar"), excluir));
+      h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", "aria-label": `Editar a campanha ${x.titulo}`, onclick: () => ir(`conteudo/${grupo.id}/${i}`) }, "✏️ Editar"), excluir));
   });
   const descartar = campo.rascunho && h("button", { class: "botao claro", type: "button", onclick: async () => {
     if (!confirm("Desfazer as mudanças salvas nas campanhas e voltar ao que está no site?")) return;
-    await pedir("rascunho", { metodo: "DELETE", corpo: { caminhos: [campo.caminho] } });
+    const res = await descartarCampo(campo.caminho, campo.rascunho.em ?? null);
+    if (outraPessoaMudou(res)) return telaGrupo(grupo.id, "", res.dados.erro);
+    if (res.status !== 200) return mensagem(msg, res.dados.erro);
     atualizarPrevia();
     telaGrupo(grupo.id);
   } }, "Voltar ao que está no site");
-  await casca(cabecalhoLista(grupo.titulo, adicionar),
+  await casca(cabecalhoLista(grupo.titulo, adicionar), avisoNoAlto(aviso),
     h("p", { class: "sub", text: "O site mostra uma contagem só: a da campanha ligada que termina primeiro. Quando ela acaba, entra a próxima." }),
     h("div", { class: "cartao" },
       lista.length ? tabela(["Campanha", "Termina", "Situação", "Ações"], linhas) : h("p", { text: "Nenhuma campanha cadastrada. Toque em \"+ Adicionar\"." }),
@@ -663,31 +1400,77 @@ async function telaListaCampanhas(grupo) {
       descartar, msg));
 }
 
-async function telaCampanha(grupo, sub) {
+// Texto guardado de uma campanha: pelo título que ela tinha quando a tela abriu (ou "nova"), não pela posição.
+const chaveDaCampanha = (campoLista, titulo) => chaveGuardada(`${campoLista.caminho}#${titulo === null ? "nova" : `titulo:${titulo}`}`);
+// Troca o endereço sem desenhar a tela de novo (ela já está certa).
+function trocarEndereco(rota) {
+  history.replaceState(null, "", `#${rota}`);
+  hashMostrado = location.hash;
+}
+
+// "procurar": o título da campanha que a tela mostrava antes de recarregar (outra pessoa mudou a lista). A campanha é
+// achada por ele, não pela posição: se outra pessoa tirou ou reordenou campanhas, a mesma posição mostrava OUTRA
+// campanha, e o "Recuperamos…" oferecia pôr o texto da campanha A por cima da B (rodada 2 da conferência).
+async function telaCampanha(grupo, sub, aviso = "", procurar) {
   const campoLista = grupo.campos[0];
-  const lista = Array.isArray(campoLista.rascunho ? campoLista.rascunho.valor : campoLista.noSite) ? [...(campoLista.rascunho ? campoLista.rascunho.valor : campoLista.noSite)] : [];
-  const nova = sub === "nova";
-  const i = nova ? lista.length : Number(sub);
-  if (!nova && !lista[i]) return ir(`conteudo/${grupo.id}`);
+  const lista = listaDoCampo(campoLista);
+  let nova = sub === "nova";
+  let i = nova ? lista.length : Number(sub);
+  let chaveDaOferta = null; // texto guardado de uma campanha que saiu da lista
+  if (procurar !== undefined && !nova && lista[i]?.titulo !== procurar) {
+    const j = lista.findIndex((c) => c.titulo === procurar);
+    if (j < 0) {
+      // A campanha saiu (ou mudou de título): o que ela digitou aparece em "Nova campanha", para criar uma campanha
+      // nova se quiser, nunca por cima de outra.
+      chaveDaOferta = chaveDaCampanha(campoLista, procurar);
+      nova = true;
+      aviso = `${aviso ? `${aviso} ` : ""}A campanha que você editava ("${procurar}") não está mais na lista. O que você digitou está abaixo, para criar uma campanha nova se quiser.`;
+    }
+    i = nova ? lista.length : j;
+    trocarEndereco(`conteudo/${grupo.id}/${nova ? "nova" : i}`);
+  }
+  if (!nova && !(Number.isInteger(i) && lista[i])) return ir(`conteudo/${grupo.id}`);
   const x = nova ? { titulo: "", texto: "", botao: "", termina: "", ligada: true } : lista[i];
-  const titulo = campo("Título", { type: "text", maxlength: 40, value: x.titulo });
-  const texto = campo("Texto (ex.: até 30% OFF com cupom)", { type: "text", maxlength: 60, value: x.texto });
-  const botao = campo("Texto do botão", { type: "text", maxlength: 30, value: x.botao });
-  const fim = campo("Termina em (horário de Brasília) · obrigatório", { type: "datetime-local", value: x.termina }, "A contagem regressiva some sozinha nessa hora.");
+  const titulo = campo("Título", { type: "text", maxlength: 40, value: x.titulo || "" });
+  const texto = campo("Texto (ex.: até 30% OFF com cupom)", { type: "text", maxlength: 60, value: x.texto || "" });
+  const botao = campo("Texto do botão", { type: "text", maxlength: 30, value: x.botao || "" });
+  const fim = campo("Termina em (horário de Brasília) · obrigatório", { type: "datetime-local", value: x.termina || "" }, "A contagem regressiva some sozinha nessa hora.");
   const ligada = h("input", { type: "checkbox", checked: x.ligada !== false });
   const msg = h("p", { class: "erro" });
   const salvar = h("button", { class: "botao cheio", type: "button" }, "Salvar");
+
+  // O que foi digitado fica guardado neste aparelho a cada letra (item 4 da especificação; itens 11, 27 e 32).
+  const lerForm = () => ({ titulo: titulo.entrada.value, texto: texto.entrada.value, botao: botao.entrada.value, termina: fim.entrada.value, ligada: ligada.checked });
+  const definirForm = (v) => {
+    titulo.entrada.value = v?.titulo ?? ""; texto.entrada.value = v?.texto ?? ""; botao.entrada.value = v?.botao ?? "";
+    fim.entrada.value = v?.termina ?? ""; ligada.checked = v?.ligada !== false;
+  };
+  const chave = chaveDaCampanha(campoLista, nova ? null : x.titulo);
+  const base = nova ? null : x;
+  const guardarForm = () => guardarEm(chave, lerForm(), base);
+  for (const e of [titulo.entrada, texto.entrada, botao.entrada, fim.entrada]) e.addEventListener("input", guardarForm);
+  fim.entrada.addEventListener("change", guardarForm);
+  ligada.addEventListener("change", guardarForm);
+  const doComeco = lerForm();
+  const oferta = oferecerRecuperacao(chaveDaOferta || chave, { atual: doComeco, base, aoUsar: definirForm,
+    mostrar: (v) => valorNaTela([v], { tipo: "campanhas" }, [doComeco], "depois") });
+
   salvar.addEventListener("click", async () => {
     mensagem(msg, "");
-    lista[i] = { titulo: titulo.entrada.value.trim(), texto: texto.entrada.value.trim(), botao: botao.entrada.value.trim(), termina: fim.entrada.value, ligada: ligada.checked };
+    const f = lerForm();
+    const novaLista = [...lista];
+    novaLista[i] = { titulo: f.titulo.trim(), texto: f.texto.trim(), botao: f.botao.trim(), termina: f.termina, ligada: f.ligada };
     ocupado(salvar, true, "Salvando…");
-    const deuCerto = await salvarCampo(campoLista, lista, msg);
+    const deuCerto = await salvarCampo(campoLista, novaLista, msg);
     ocupado(salvar, false);
-    if (deuCerto) ir(`conteudo/${grupo.id}`);
+    // Outra pessoa mudou a lista: o que foi digitado fica guardado e a tela volta com a versão nova (e o aviso), na
+    // mesma campanha (pelo título que a tela mostrava).
+    if (deuCerto?.recarregar) { guardarForm(); return telaGrupo(grupo.id, nova ? "nova" : String(i), deuCerto.aviso, nova ? undefined : x.titulo); }
+    if (deuCerto) { esquecerChave(chave); if (chaveDaOferta) esquecerChave(chaveDaOferta); ir(`conteudo/${grupo.id}`); }
   });
   await casca(h("button", { class: "voltar", type: "button", onclick: () => ir(`conteudo/${grupo.id}`) }, `‹ ${grupo.titulo}`),
-    h("h1", { text: nova ? "Nova campanha" : `Editar: ${x.titulo}` }),
-    h("div", { class: "cartao" }, titulo.el, texto.el, botao.el, fim.el,
+    h("h1", { text: nova ? "Nova campanha" : `Editar: ${x.titulo}` }), avisoNoAlto(aviso),
+    h("div", { class: "cartao" }, oferta, titulo.el, texto.el, botao.el, fim.el,
       h("label", { class: "escolha" }, ligada, h("span", { text: "Ligada no site" })), msg, salvar,
       h("p", { class: "ajuda", text: "Só anuncie desconto que já existe na Yampi, com a mesma data de término. Salvar não publica." })));
 }
@@ -703,103 +1486,175 @@ async function telaListaItens(grupo) {
     const valor = (c) => (c.rascunho ? c.rascunho.valor : c.noSite);
     const liga = it.campos.find((c) => c.tipo === "ligado");
     const videos = it.campos.find((c) => c.tipo === "videos");
+    const nVideos = soObjetos(videos && valor(videos)).length;
     const situacao = liga ? etiqueta(`${liga.rotulo}: ${valor(liga) === false ? "Não" : "Sim"}`, valor(liga) === false ? "cinza" : "verde")
-      : videos ? etiqueta(`${(valor(videos) || []).length} vídeo(s)`, (valor(videos) || []).length ? "verde" : "cinza") : "";
+      : videos ? etiqueta(`${nVideos} ${nVideos === 1 ? "vídeo" : "vídeos"}`, nVideos ? "verde" : "cinza") : "";
     const salvos = it.campos.filter((c) => c.rascunho).length;
     return h("tr", {},
       h("td", {}, h("strong", { text: it.nome }), salvos > 0 && h("div", { class: "miudo", text: `${salvos} mudança(s) salva(s), ainda não publicada(s)` })),
       h("td", {}, situacao),
-      h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", onclick: () => ir(`conteudo/${grupo.id}/${it.chave}`) }, "✏️ Editar")));
+      h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", "aria-label": `Editar ${it.nome}`, onclick: () => ir(`conteudo/${grupo.id}/${it.chave}`) }, "✏️ Editar")));
   });
   await casca(cabecalhoLista(grupo.titulo), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }),
     h("div", { class: "cartao" }, tabela(["Nome", "Situação", "Ações"], linhas)));
 }
 
-async function telaGrupo(id, sub = "") {
-  const r = conteudoCache ? { status: 200, dados: conteudoCache } : await carregarConteudo();
-  conteudoCache = null; // da próxima vez, lê de novo
-  const grupo = r.status === 200 && r.dados.grupos.find((g) => g.id === id);
+// aviso: mensagem no alto depois de desenhar de novo (ex.: o servidor recusou porque outra pessoa mudou o campo).
+// procurar (Campanhas): o título da campanha que a tela mostrava (ver telaCampanha).
+async function telaGrupo(id, sub = "", aviso = "", procurar) {
+  const copia = conteudoGuardado();
+  const r = copia ? { status: 200, dados: copia } : await carregarConteudo();
+  if (r.status !== 200) return telaFalhou("Conteúdo do site", r);
+  const grupo = r.dados.grupos.find((g) => g.id === id);
   if (!grupo) return ir("conteudo");
-  if (grupo.campos.length === 1 && grupo.campos[0].tipo === "campanhas") return sub ? telaCampanha(grupo, sub) : telaListaCampanhas(grupo);
+  if (grupo.campos.length === 1 && grupo.campos[0].tipo === "campanhas") return sub ? telaCampanha(grupo, sub, aviso, procurar) : telaListaCampanhas(grupo, aviso);
   const porItem = grupo.campos.length > 0 && grupo.campos.every((c) => c.item);
   if (porItem && !sub) return telaListaItens(grupo);
   const doGrupo = porItem ? grupo.campos.filter((c) => c.item === sub) : grupo.campos;
-  if (!doGrupo.length) return ir(`conteudo/${id}`);
+  const voltarDoGrupo = porItem ? h("button", { class: "voltar", type: "button", onclick: () => ir(`conteudo/${id}`) }, `‹ ${grupo.titulo}`)
+    : h("button", { class: "voltar", type: "button", onclick: () => ir("conteudo") }, "‹ Conteúdo do site");
+  if (!doGrupo.length) {
+    // Item que não existe mais: volta para a lista. Grupo sem nenhum item (ex.: lista de vídeos que ainda não existe
+    // no site): mostra o aviso. Antes, "ir" para o mesmo endereço desenhava esta tela de novo, sem parar (item 29).
+    if (porItem) return ir(`conteudo/${id}`);
+    return casca(voltarDoGrupo, h("h1", { text: grupo.titulo }),
+      h("div", { class: "cartao" }, h("p", { text: "Nada para mostrar aqui ainda." }), grupo.descricao && h("p", { class: "ajuda", text: grupo.descricao })));
+  }
   const msg = h("p", { class: "erro" });
   const campos = doGrupo.map((c) => {
     const valorAtual = c.rascunho ? c.rascunho.valor : c.noSite;
-    const entrada = entradaDoCampo(c, valorAtual);
+    const chave = chaveGuardada(c.caminho);
     const erroCampo = h("p", { class: "erro" });
     const notas = h("div");
-    const contador = entrada.texto && c.max && h("p", { class: "ajuda" });
+    let contador = null;
     const atualizarContador = () => { if (contador) contador.textContent = `${entrada.ler().length} de ${c.max} letras`; };
-
-    const recuperado = entrada.texto ? guardado(c.caminho) : undefined;
-    if (recuperado !== undefined && recuperado !== entrada.ler() && recuperado !== String(valorAtual ?? "")) {
-      entrada.foco.value = recuperado;
-      notas.append(h("p", { class: "sucesso", text: "Recuperamos o que você tinha digitado e não salvou." }));
-    }
-    if (entrada.texto) entrada.foco.addEventListener("input", () => { guardar(c.caminho, entrada.ler()); atualizarContador(); });
+    // Cada mudança fica guardada neste aparelho (item 4 da especificação), com o valor que a tela mostrava.
+    const entrada = entradaDoCampo(c, valorAtual, () => { guardarEm(chave, entrada.ler(), valorAtual); atualizarContador(); });
+    contador = entrada.texto && c.max ? h("p", { class: "ajuda" }) : null;
     atualizarContador();
+
+    const oferta = oferecerRecuperacao(chave, { atual: entrada.ler(), base: valorAtual, mesmo: entrada.mesmo,
+      aoUsar: (v) => { entrada.definir(v); atualizarContador(); },
+      mostrar: (v) => valorNaTela(v, c, entrada.ler(), "depois") });
+    if (oferta) notas.append(oferta);
 
     if (c.rascunho) {
       const descartar = h("button", { class: "botao claro", type: "button" }, "Voltar ao que está no site");
       descartar.addEventListener("click", async () => {
+        // A tela é desenhada de novo: com vídeo ou foto subindo (de qualquer campo), pergunta antes (item 56).
+        if (!podeSairDaTela()) return;
+        // Um toque errado no celular apagava a versão salva (ex.: as frases do CEO) e o que ela digitou aqui, sem
+        // perguntar; Campanhas e "Remover" uma frase já perguntavam (rodada 2 da conferência).
+        if (!confirm(`Voltar ao que está no site? A versão salva por ${c.rascunho.por} some${entrada.mudou() ? " e o que você digitou agora também" : ""}.`)) return;
         ocupado(descartar, true);
-        const res = await pedir("rascunho", { metodo: "DELETE", corpo: { caminhos: [c.caminho] } });
+        const res = await descartarCampo(c.caminho, c.rascunho.em ?? null);
+        if (outraPessoaMudou(res)) {
+          // Nada foi descartado: guarda o que ela mexeu aqui e mostra a versão nova, com o aviso (contrato C3).
+          if (entrada.mudou()) guardarEm(chave, entrada.ler(), valorAtual);
+          return telaGrupo(id, sub, res.dados.erro);
+        }
         if (res.status !== 200) { ocupado(descartar, false); return mensagem(erroCampo, res.dados.erro); }
-        esquecer(c.caminho);
+        esquecerChave(chave);
         telaGrupo(id, sub);
         atualizarPrevia();
       });
-      notas.append(h("p", { class: "miudo", text: `Salvo por ${c.rascunho.por} em ${quando(c.rascunho.em)}, ainda não publicado. No site: ${mostrar(c.noSite)}` }), descartar);
+      notas.append(h("div", { class: "miudo no-site" },
+        h("p", { text: `Salvo por ${c.rascunho.por} em ${quando(c.rascunho.em)}, ainda não publicado. No site:` }),
+        valorNaTela(c.noSite, c, c.rascunho.valor, "antes")), descartar);
     }
-    const bloco = h("div", { class: "campo" }, h("span", { class: "rotulo", text: porItem ? c.rotulo : c.nome }), entrada.el, contador, c.ajuda && h("p", { class: "ajuda", text: c.ajuda }), notas, erroCampo);
-    return { c, entrada, valorAtual, erroCampo, bloco };
+    // Nome ligado ao campo (o leitor de tela diz qual é; tocar no nome leva ao campo). Listas: grupo com nome (item 61).
+    const nome = porItem ? c.rotulo : c.nome;
+    const idRotulo = novoId();
+    let rotulo;
+    if (entrada.lista) rotulo = h("span", { class: "rotulo", id: idRotulo, text: nome });
+    else {
+      if (!entrada.foco.id) entrada.foco.id = novoId();
+      rotulo = h("label", { class: "rotulo", for: entrada.foco.id, id: idRotulo, text: nome });
+    }
+    const bloco = h("div", { class: "campo", ...(entrada.lista && { role: "group", "aria-labelledby": idRotulo }) },
+      rotulo, entrada.el, contador, c.ajuda && h("p", { class: "ajuda", text: c.ajuda }), notas, erroCampo);
+    return { c, entrada, valorAtual, chave, erroCampo, bloco, oferta };
   });
 
   const salvar = h("button", { class: "botao cheio", type: "button" }, "Salvar");
   salvar.addEventListener("click", async () => {
-    for (const x of campos) mensagem(x.erroCampo, "");
-    const mudancas = campos.filter((x) => {
-      const novo = x.entrada.ler();
-      if (x.entrada.lista) return JSON.stringify(novo) !== JSON.stringify(x.valorAtual ?? []);
-      return x.c.tipo === "ligado" ? novo !== (x.valorAtual === true) : novo !== String(x.valorAtual ?? "");
-    }).map((x) => ({ caminho: x.c.caminho, valor: x.entrada.ler(), antes: x.c.noSite }));
-    if (!mudancas.length) return mensagem(msg, "Nada mudou nesta tela.", "ajuda");
+    for (const x of campos) { mensagem(x.erroCampo, ""); x.entrada.marcarErro?.(null); x.entrada.foco?.removeAttribute?.("aria-invalid"); }
+    // Salvar redesenha a tela: com envio no meio, o vídeo ou a foto se perderia (item 56).
+    if (enviosEmAndamento) return mensagem(msg, "Espere o vídeo ou a foto terminar de subir para salvar.");
+    const mudados = campos.filter((x) => x.entrada.mudou());
+    if (!mudados.length) return mensagem(msg, "Nada mudou nesta tela.", "ajuda");
+    mensagem(msg, "");
     ocupado(salvar, true, "Salvando…");
+    const vistos = await podeSalvarPorCima(mudados.map((x) => ({ caminho: x.c.caminho, em: x.c.rascunho?.em, nome: x.c.nome })));
+    if (vistos === null) return;
+    if (!vistos) {
+      for (const x of mudados) guardarEm(x.chave, x.entrada.ler(), x.valorAtual);
+      return telaGrupo(id, sub);
+    }
+    const mudancas = mudados.map((x) => ({ caminho: x.c.caminho, valor: x.entrada.ler(), antes: x.c.noSite, visto: vistos[x.c.caminho] }));
     const res = await pedir("rascunho", { metodo: "POST", corpo: { mudancas } });
     ocupado(salvar, false);
+    // Outra pessoa salvou no meio-tempo: nada foi gravado. O que ela digitou fica guardado no aparelho e a tela volta
+    // com a versão nova, com o aviso do servidor e o "Recuperamos…" (contrato C3).
+    if (outraPessoaMudou(res)) {
+      for (const x of mudados) guardarEm(x.chave, x.entrada.ler(), x.valorAtual);
+      return telaGrupo(id, sub, res.dados.erro);
+    }
     if (res.status !== 200) {
+      let primeiro = null;
       for (const e of res.dados.campos || []) {
         const x = campos.find((y) => y.c.caminho === e.caminho);
-        if (x) mensagem(x.erroCampo, e.erro);
+        if (!x) continue;
+        mensagem(x.erroCampo, e.erro);
+        // Lista de frases: a caixa da frase citada ("a frase 5"); outros campos: o próprio campo.
+        const alvo = x.entrada.marcarErro ? x.entrada.marcarErro(e.erro) : x.entrada.foco;
+        if (!x.entrada.marcarErro && ["INPUT", "SELECT", "TEXTAREA"].includes(alvo?.tagName)) alvo.setAttribute("aria-invalid", "true");
+        primeiro ??= alvo;
       }
-      return mensagem(msg, res.dados.erro);
+      mensagem(msg, res.dados.erro);
+      // A mensagem geral fica no fim da tela e o erro pode estar milhares de pixels acima (tela do produto com as 4
+      // listas): leva a pessoa até o primeiro campo com erro (rodada 2 da conferência).
+      if (primeiro) { primeiro.focus?.({ preventScroll: true }); primeiro.scrollIntoView?.({ block: "center" }); }
+      return;
     }
-    for (const m of mudancas) esquecer(m.caminho);
+    for (const x of mudados) esquecerChave(x.chave);
     await telaGrupo(id, sub);
     atualizarPrevia();
   });
 
-  await casca(porItem ? h("button", { class: "voltar", type: "button", onclick: () => ir(`conteudo/${id}`) }, `‹ ${grupo.titulo}`)
-    : h("button", { class: "voltar", type: "button", onclick: () => ir("conteudo") }, "‹ Conteúdo do site"),
-    h("h1", { text: porItem ? doGrupo[0].itemNome : grupo.titulo }), !porItem && grupo.descricao && h("p", { class: "sub", text: grupo.descricao }),
+  // Texto recuperado num campo lá embaixo (a tela do produto tem várias telas de altura no celular): avisa no alto,
+  // com um botão que leva até ele (rodada 2 da conferência).
+  const recuperados = campos.filter((x) => x.oferta);
+  const avisoRecuperado = recuperados.length > 0 && h("div", { class: "ajuda", role: "status" },
+    h("p", { text: `Tem texto que você digitou e não salvou, guardado neste aparelho: ${recuperados.map((x) => (porItem ? x.c.rotulo : x.c.nome)).join(", ")}.` }),
+    h("button", { class: "botao claro", type: "button", onclick: () => {
+      const x = recuperados.find((y) => y.oferta.isConnected); // "Usar" e "Descartar" tiram a caixa
+      if (x) x.oferta.scrollIntoView?.({ block: "center" });
+      else avisoRecuperado.remove();
+    } }, "Ir até lá"));
+  await casca(voltarDoGrupo,
+    h("h1", { text: porItem ? doGrupo[0].itemNome : grupo.titulo }), avisoNoAlto(aviso), avisoRecuperado, !porItem && grupo.descricao && h("p", { class: "sub", text: grupo.descricao }),
     h("div", { class: "cartao" }, campos.map((x) => x.bloco), msg, salvar,
       h("p", { class: "ajuda", text: "Salvar não publica nem gasta crédito. Para ir ao site, use Publicar (ou Enviar para aprovação)." })));
 }
 
 // ---------- conflitos (mesmo campo mudado por fora) ----------
-function telaConflitos(conflitos, explicacao, aoEscolher) {
+// Cada lado aparece de verdade (foto com miniatura, campanhas e vídeos item por item, com o que muda em destaque), e
+// a escolha vai com a marca do valor do site que a pessoa viu (itens 4 e 60).
+async function telaConflitos(conflitos, explicacao, aoEscolher) {
+  const mapa = await regras();
   const escolhas = {};
   const blocos = conflitos.map((c) => {
-    const nomeGrupo = "g" + Math.random().toString(36).slice(2, 8);
-    const opcao = (valor, titulo, texto) => {
-      const radio = h("input", { type: "radio", name: nomeGrupo, value: valor, onchange: () => { escolhas[c.caminho] = valor; } });
-      return h("label", { class: "escolha" }, radio, h("span", {}, h("b", { text: titulo }), h("br"), mostrar(texto)));
+    const regra = mapa[c.caminho];
+    const nomeGrupo = novoId();
+    const opcao = (lado, titulo, valor, outro) => {
+      const radio = h("input", { type: "radio", name: nomeGrupo, value: lado, onchange: () => { escolhas[c.caminho] = c.marca ? { lado, marca: c.marca } : lado; } });
+      return h("label", { class: "escolha" }, radio, h("span", { class: "escolha-conteudo" }, h("b", { text: titulo }),
+        valorNaTela(valor, regra, outro, lado === "site" ? "antes" : "depois")));
     };
-    return h("div", { class: "cartao" }, h("h3", { text: c.nome }),
-      opcao("painel", "Ficar com a versão do painel", c.noPainel), opcao("site", "Manter a que está no site", c.noSite));
+    return h("div", { class: "cartao", role: "radiogroup", "aria-label": c.nome },
+      h("h3", { text: regra?.nome || c.nome || c.caminho }),
+      opcao("painel", "Ficar com a versão do painel", c.noPainel, c.noSite), opcao("site", "Manter a que está no site", c.noSite, c.noPainel));
   });
   const msg = h("p", { class: "erro" });
   const botao = h("button", { class: "botao verde cheio", type: "button", onclick: async () => {
@@ -808,30 +1663,138 @@ function telaConflitos(conflitos, explicacao, aoEscolher) {
     await aoEscolher(escolhas, msg);
     ocupado(botao, false);
   } }, "Continuar");
-  casca(voltar(), h("h1", { text: "Escolha qual versão fica" }), h("p", { class: "sub", text: explicacao }), ...blocos, msg, botao);
+  return casca(voltar(), h("h1", { text: "Escolha qual versão fica" }), h("p", { class: "sub", text: explicacao }), ...blocos, msg, botao);
 }
 
-function resultadoPublicacao(r, msg, repetir) {
-  if (r.status === 200) atualizarPrevia();
+// Campos salvos que não valem mais (as regras do site mudaram): diz qual e por quê, com "Descartar esta mudança"
+// (Publicar e Enviar) ou o recado pronto para devolver (Aprovar) (item 34).
+// "vistos": o "em" de cada mudança que a tela mostrou (o Descartar vai com ele; contrato C3). "recarregar": desenha a
+// tela de novo com um aviso (quando outra pessoa mudou o campo e nada foi descartado).
+function listaDeInvalidos(invalidos, { nomes = {}, descartavel = false, aoDevolver, vistos, recarregar } = {}) {
+  // Primeiro o nome da tela de Conteúdo (com o nome do item), depois o que a tela recebeu (rodada 2 da conferência).
+  const nomeDe = (c) => regrasCache?.mapa?.[c]?.nome || nomes[c] || c;
+  // Linha do recado: a mensagem do servidor já começa com o nome do campo ("Destaques: a frase 1 passou…"); em vez
+  // de repetir ("- Destaques · Gloss: Destaques: …"), troca esse começo pelo nome com o item (rodada 2).
+  const linhaDoRecado = (x) => {
+    const nome = nomeDe(x.caminho);
+    const erro = x.erro || "não vale mais";
+    const rotulo = regrasCache?.mapa?.[x.caminho]?.rotulo || nome.split(" · ")[0];
+    return rotulo && erro.startsWith(rotulo) && /^(:| \()/.test(erro.slice(rotulo.length)) ? `- ${nome}${erro.slice(rotulo.length)}` : `- ${nome}: ${erro}`;
+  };
+  return h("div", { class: "lista-invalidos" },
+    h("ul", { class: "lista" }, invalidos.map((x) => {
+      const msgItem = h("p", { class: "erro" });
+      const descartar = descartavel && h("button", { class: "botao claro", type: "button" }, "Descartar esta mudança");
+      if (descartar) {
+        descartar.addEventListener("click", async () => {
+          if (!confirm(`Descartar a mudança salva em "${nomeDe(x.caminho)}"? Ela não vai para o site.`)) return;
+          ocupado(descartar, true);
+          const res = await descartarCampo(x.caminho, vistos && Object.hasOwn(vistos, x.caminho) ? vistos[x.caminho] ?? null : undefined);
+          if (outraPessoaMudou(res) && recarregar) return recarregar(res.dados.erro);
+          if (res.status !== 200) { ocupado(descartar, false); return mensagem(msgItem, res.dados.erro); }
+          atualizarPrevia();
+          rotear();
+        });
+      }
+      return h("li", {}, h("strong", { text: nomeDe(x.caminho) }), h("div", { text: x.erro || "Não vale mais." }), descartar, msgItem);
+    })),
+    aoDevolver && h("button", { class: "botao claro", type: "button", onclick: () => aoDevolver(
+      `Corrija e envie de novo:\n${invalidos.map(linhaDoRecado).join("\n")}`.replace(/[<>]/g, "").slice(0, 500)) },
+    "Devolver para a funcionária com estes problemas"));
+}
+function mostrarInvalidos(r, msg, opcoes) {
+  if (msg.nextElementSibling?.classList.contains("lista-invalidos")) msg.nextElementSibling.remove();
+  const invalidos = (Array.isArray(r.dados.campos) ? r.dados.campos : []).filter((x) => x && typeof x === "object" && typeof x.caminho === "string");
+  if (invalidos.length) msg.after(listaDeInvalidos(invalidos, opcoes));
+}
+
+// ---------- depois de publicar: já está no ar? (item 8; contrato C2) ----------
+// O site (Opção A) publica /versao.json com o código (commit) da versão no ar. Com o código desta publicação, que vem
+// na resposta do Publicar/Aprovar/Desfazer, o painel confere de tempos em tempos. Sem /versao.json ou sem o código,
+// fica só o "Enviado" (sem pedido nenhum a mais); nada aqui diz "Publicado" sem ter visto.
+const CONFERIR_A_CADA = 15_000;
+const CONFERIR_ATE = 10 * 60_000;
+async function lerVersaoNoAr() {
+  try {
+    const r = await fetch("/versao.json", { cache: "no-store", credentials: "same-origin" });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && typeof d.commit === "string" && /^[0-9a-f]{7,40}$/.test(d.commit) ? d.commit : null;
+  } catch {
+    return null;
+  }
+}
+async function conferirSeEstaNoAr(publicacao, nota) {
+  const commit = commitDe(publicacao);
+  if (!commit) return; // sem o código na resposta: nada a conferir (e nenhum pedido ao Histórico)
+  const quandoFoi = publicacao.quando || Date.now();
+  const inicio = Date.now();
+  let antes = null; // versão no ar quando começou a conferir (a de antes desta publicação)
+  let conferido = null;
+  mensagem(nota, "Conferindo se a nova versão já está no ar…", "ajuda");
+  while (nota.isConnected && Date.now() - inicio < CONFERIR_ATE) {
+    const noAr = await lerVersaoNoAr();
+    if (!noAr) { mensagem(nota, "", "ajuda"); return; } // site sem /versao.json: fica só o "Enviado"
+    antes ??= noAr;
+    let pronto = mesmoCommit(noAr, commit);
+    if (!pronto && noAr !== antes && noAr !== conferido) {
+      // O site mudou para outra versão que não é esta: se for de uma publicação do painel feita depois desta, esta
+      // já foi junto. (Enquanto o site continua na versão de antes, não pergunta nada ao Histórico.)
+      conferido = noAr;
+      const hist = await pedir("historico");
+      const outra = hist.status === 200 ? (hist.dados.publicacoes || []).find((p) => mesmoCommit(noAr, commitDe(p))) : null;
+      pronto = Boolean(outra && outra.quando >= quandoFoi);
+    }
+    if (pronto) return mensagem(nota, "Pronto: a nova versão já está no ar.", "sucesso");
+    await esperar(CONFERIR_A_CADA);
+  }
+  if (nota.isConnected) mensagem(nota, "Ainda não apareceu no site. Confira no Histórico daqui a pouco; se continuar assim, avise a administradora.", "erro");
+}
+
+// Resultado de Publicar, Aprovar e Desfazer.
+async function resultadoPublicacao(r, msg, repetir, opcoes = {}) {
   if (r.status === 409 && r.dados.conflitos) return telaConflitos(r.dados.conflitos, r.dados.erro, repetir);
-  if (r.status !== 200) return mensagem(msg, r.dados.erro);
+  if (r.status === 409 && r.dados.rascunhoMudou && opcoes.recarregar) return opcoes.recarregar(r.dados.erro);
+  if (r.status !== 200) {
+    mensagem(msg, r.dados.erro);
+    mostrarInvalidos(r, msg, opcoes);
+    return;
+  }
+  conteudoCache = null;
+  atualizarPrevia();
   const d = r.dados;
-  casca(h("div", { class: "cartao" },
-    h("h1", { text: d.nada ? "Nada para mudar" : "Publicado!" }),
-    h("p", { text: d.nada ? d.aviso : `O site vai mostrar as mudanças em alguns minutos: ${d.mudancas.join(", ")}.` }),
-    h("button", { class: "botao", type: "button", onclick: () => ir("") }, "Voltar ao início")));
+  if (d.nada) return casca(h("div", { class: "cartao" }, h("h1", { text: "Nada para mudar" }), h("p", { text: d.aviso || "O site já está assim." }), botaoInicio()));
+  const estado = h("p", { class: "ajuda", role: "status" });
+  await casca(h("div", { class: "cartao" },
+    h("h1", { text: "Enviado para o site" }),
+    h("p", { text: "Pode levar alguns minutos para aparecer." }),
+    d.esperandoRobo && h("p", { class: "ajuda", text: "Tem vídeo novo: o robô dos vídeos diminui o vídeo e só então o site muda (uns minutos). O Histórico mostra quando terminar." }),
+    // Com o nome da tela de Conteúdo, pelo campo de cada mudança ("caminhos", na mesma ordem; rodada 2 da conferência).
+    Array.isArray(d.mudancas) && d.mudancas.length > 0 && h("ul", { class: "lista" },
+      d.mudancas.map((n, i) => h("li", { text: String(regrasCache?.mapa?.[Array.isArray(d.caminhos) ? d.caminhos[i] : ""]?.nome || n) }))),
+    estado, botaoInicio()));
+  if (!d.esperandoRobo) conferirSeEstaNoAr(d, estado);
 }
 
 // ---------- publicar ----------
-async function telaPublicar() {
+// Mostra cada mudança salva com o antes e o depois, e publica exatamente essa lista: o servidor confere (caminho e
+// hora de cada uma) e, se o rascunho mudou no meio-tempo, não publica nada e a tela recarrega (itens 4 e 23).
+async function telaPublicar(aviso) {
   if (!ehResponsavel()) return ir("enviar");
-  const r = await pedir("publicar");
-  const lista = r.dados.mudancas || [];
+  const [r, rasc, mapa] = await Promise.all([pedir("publicar"), pedir("rascunho"), regras()]);
+  if (r.status !== 200) return telaFalhou("Publicar no site", r);
+  if (rasc.status !== 200) return telaFalhou("Publicar no site", rasc);
+  const nomes = Object.fromEntries((r.dados.mudancas || []).map((m) => [m.caminho, m.nome]));
+  const mudancas = rasc.dados.mudancas || {};
+  const vistas = vistasDe(mudancas);
+  const lista = Object.entries(mudancas).map(([caminho, m]) => ({ caminho, ...m, nome: mapa[caminho]?.nome || nomes[caminho] || caminho }));
   const msg = h("p", { class: "erro" });
   const botao = h("button", { class: "botao verde cheio", type: "button", disabled: !lista.length }, "Publicar no site");
-  const publicar = async (escolhas) => {
-    const res = await pedir("publicar", { metodo: "POST", corpo: { confirmar: true, escolhas } });
-    resultadoPublicacao(res, msg, (novas) => publicar({ ...escolhas, ...novas }));
+  // "onde": a mensagem da tela que está na frente (depois da tela de conflitos, é a dela).
+  const publicar = async (escolhas, onde = msg) => {
+    const res = await pedir("publicar", { metodo: "POST", corpo: { confirmar: true, escolhas, vistas } });
+    await resultadoPublicacao(res, onde, (novas, m) => publicar({ ...escolhas, ...novas }, m),
+      { nomes: Object.fromEntries(lista.map((m) => [m.caminho, m.nome])), descartavel: true, vistos: vistas, recarregar: (erro) => telaPublicar(erro) });
   };
   botao.addEventListener("click", async () => {
     if (!confirm(`Publicar ${lista.length} mudança(s) no site? Conta 1 publicação do mês.`)) return;
@@ -840,82 +1803,131 @@ async function telaPublicar() {
     ocupado(botao, false);
   });
   await casca(voltar(), h("h1", { text: "Publicar no site" }),
+    aviso && h("p", { class: "erro", role: "alert", text: aviso }),
     h("div", { class: "cartao" },
-      lista.length ? h("ul", { class: "lista" }, lista.map((m) => h("li", {}, h("strong", { text: m.nome }), h("div", { class: "miudo", text: `Salvo por ${m.por} em ${quando(m.em)}` }))))
+      lista.length ? h("ul", { class: "lista" }, lista.map((m) => h("li", {}, h("strong", { text: m.nome }),
+        h("div", { class: "miudo", text: `Salvo por ${m.por} em ${quando(m.em)}` }),
+        Object.hasOwn(m, "antes") ? antesDepois(m.antes, m.valor, mapa[m.caminho], ["No site (quando foi salvo)", "Vai para o site"])
+          : h("div", { class: "antes-depois um" }, h("div", {}, h("b", { text: "Vai para o site" }), valorNaTela(m.valor, mapa[m.caminho]))))))
         : h("p", { text: "Não há mudanças salvas para publicar." }),
       msg, botao));
 }
 
 // ---------- enviar para aprovação (funcionária) ----------
-async function telaEnviar() {
-  const r = await pedir("rascunho");
-  const total = r.dados.total || 0;
+async function telaEnviar(aviso) {
+  const [r, mapa] = await Promise.all([pedir("rascunho"), regras()]);
+  if (r.status !== 200) return telaFalhou("Enviar para aprovação", r);
+  const lista = Object.entries(r.dados.mudancas || {}).map(([caminho, m]) => ({ caminho, ...m, nome: mapa[caminho]?.nome || caminho }));
   const msg = h("p", { class: "erro" });
-  const botao = h("button", { class: "botao verde cheio", type: "button", disabled: !total }, "Enviar para aprovação");
+  const botao = h("button", { class: "botao verde cheio", type: "button", disabled: !lista.length }, "Enviar para aprovação");
   botao.addEventListener("click", async () => {
     ocupado(botao, true, "Enviando…");
     const res = await pedir("enviar", { metodo: "POST", corpo: {} });
     ocupado(botao, false);
-    if (res.status !== 201) return mensagem(msg, res.dados.erro);
+    if (res.status !== 201) {
+      mensagem(msg, res.dados.erro);
+      return mostrarInvalidos(res, msg, { nomes: Object.fromEntries(lista.map((m) => [m.caminho, m.nome])), descartavel: true,
+        vistos: vistasDe(r.dados.mudancas), recarregar: (erro) => telaEnviar(erro) });
+    }
     casca(h("div", { class: "cartao" }, h("h1", { text: "Enviado!" }),
-      h("p", { text: "A Bruna e o CEO foram avisados. Você vê a resposta em Aprovações." }),
-      h("button", { class: "botao", type: "button", onclick: () => ir("") }, "Voltar ao início")));
+      h("p", { text: "A Bruna e o CEO foram avisados. Você vê a resposta em Aprovações." }), botaoInicio()));
   });
-  await casca(voltar(), h("h1", { text: "Enviar para aprovação" }),
-    h("div", { class: "cartao" }, h("p", { text: total ? `Você tem ${total} mudança(s) salvas.` : "Você não tem mudanças salvas." }), msg, botao));
+  await casca(voltar(), h("h1", { text: "Enviar para aprovação" }), avisoNoAlto(aviso),
+    h("div", { class: "cartao" },
+      h("p", { text: lista.length ? `Você tem ${lista.length} mudança(s) salvas.` : "Você não tem mudanças salvas." }),
+      lista.length > 0 && h("ul", { class: "lista" }, lista.map((m) => h("li", {}, h("strong", { text: m.nome }),
+        Object.hasOwn(m, "antes") ? antesDepois(m.antes, m.valor, mapa[m.caminho], ["No site", "Sua mudança"])
+          : h("div", { class: "antes-depois um" }, h("div", {}, h("b", { text: "Sua mudança" }), valorNaTela(m.valor, mapa[m.caminho])))))),
+      msg, botao));
 }
 
 // ---------- aprovações ----------
 async function telaAprovacoes() {
-  const r = await pedir("aprovacoes");
+  const [r, mapa] = await Promise.all([pedir("aprovacoes"), regras()]);
+  if (r.status !== 200) return telaFalhou("Aprovações", r);
   const envios = r.dados.envios || [];
   const ETIQUETA = { pendente: ["Esperando", "laranja"], aprovado: ["Aprovado", "verde"], devolvido: ["Devolvido", ""], descartado: ["Descartado", "cinza"], aprovando: ["Publicando", "laranja"] };
   const cartoes = envios.map((e) => {
     const msg = h("p", { class: "erro" });
     const acoes = h("div", { class: "botoes" });
-    if (e.status === "pendente" && ehResponsavel()) {
-      const decidir = async (corpo, botao) => {
+    const caixaRecado = h("div");
+    // Envio que parou no meio da publicação ("preso", servidor) volta a ter os botões (itens 16 e 30).
+    if ((e.status === "pendente" || e.preso === true) && ehResponsavel()) {
+      const nomes = Object.fromEntries(e.mudancas.map((m) => [m.caminho, m.nome]));
+      const chaveRecado = chaveGuardada(`recado:${e.id}`);
+      const decidir = async (corpo, botao, onde = msg) => {
         ocupado(botao, true);
         const res = await pedir("aprovacoes", { metodo: "POST", corpo: { id: e.id, ...corpo } });
         ocupado(botao, false);
-        if (corpo.acao === "aprovar") return resultadoPublicacao(res, msg, (escolhas) => decidir({ ...corpo, escolhas }, botao));
-        if (res.status !== 200) return mensagem(msg, res.dados.erro);
+        if (corpo.acao === "aprovar") return resultadoPublicacao(res, onde, (escolhas, m) => decidir({ ...corpo, escolhas }, botao, m), { nomes, aoDevolver: abrirRecado });
+        if (res.status !== 200) return mensagem(onde, res.dados.erro);
+        if (corpo.acao === "devolver") esquecerChave(chaveRecado);
         telaAprovacoes();
       };
-      const aprovar = h("button", { class: "botao verde", type: "button" }, "Aprovar e publicar");
-      aprovar.addEventListener("click", () => confirm("Aprovar e publicar no site? Conta 1 publicação do mês.") && decidir({ acao: "aprovar" }, aprovar));
-      const devolver = h("button", { class: "botao claro", type: "button" }, "Devolver com recado");
-      devolver.addEventListener("click", () => {
-        const recado = prompt("Recado para a funcionária (o que precisa mudar):");
-        if (recado) decidir({ acao: "devolver", recado }, devolver);
-      });
+      // Recado num campo da própria tela (até 500 letras), guardado no aparelho: se o servidor recusar ou a entrada
+      // vencer, o texto continua (item 32).
+      function abrirRecado(texto) {
+        const area = h("textarea", { id: novoId(), maxlength: 500, rows: 4 });
+        const contador = h("p", { class: "ajuda" });
+        const contar = () => { contador.textContent = `${area.value.length} de 500 letras`; };
+        if (typeof texto === "string") { area.value = texto; guardarEm(chaveRecado, area.value, null); }
+        area.addEventListener("input", () => { guardarEm(chaveRecado, area.value, null); contar(); });
+        const oferta = typeof texto === "string" ? null : oferecerRecuperacao(chaveRecado, { atual: "", base: null,
+          aoUsar: (v) => { area.value = String(v); contar(); }, mostrar: (v) => h("p", { class: "valor-texto", text: String(v) }) });
+        const enviar = h("button", { class: "botao", type: "button" }, "Devolver com este recado");
+        enviar.addEventListener("click", () => {
+          const recado = area.value.trim();
+          if (!recado) return mensagem(msg, "Escreva o recado (o que precisa mudar).");
+          if (/[<>]/.test(recado)) return mensagem(msg, "Não use os sinais < e > no recado.");
+          mensagem(msg, "");
+          decidir({ acao: "devolver", recado }, enviar);
+        });
+        const cancelar = h("button", { class: "botao claro", type: "button", onclick: () => caixaRecado.replaceChildren() }, "Cancelar");
+        contar();
+        caixaRecado.replaceChildren(h("div", { class: "campo" },
+          h("label", { for: area.id, text: "Recado para a funcionária (o que precisa mudar)" }), area, contador, oferta), h("div", { class: "botoes" }, enviar, cancelar));
+        area.focus();
+      }
+      const aprovar = h("button", { class: "botao verde", type: "button" }, e.preso ? "Tentar publicar de novo" : "Aprovar e publicar");
+      aprovar.addEventListener("click", () => confirm(e.preso
+        ? "Tentar publicar de novo? Se já tiver entrado no site, o painel só confirma."
+        : "Aprovar e publicar no site? Conta 1 publicação do mês.") && decidir({ acao: "aprovar" }, aprovar));
+      const devolver = h("button", { class: "botao claro", type: "button", onclick: () => abrirRecado() }, "Devolver com recado");
       const descartar = h("button", { class: "botao perigo", type: "button" }, "Descartar");
       descartar.addEventListener("click", () => confirm("Descartar estas mudanças? Elas não vão para o site.") && decidir({ acao: "descartar" }, descartar));
       acoes.append(aprovar, devolver, descartar);
+      if (lerGuardado(chaveRecado)) abrirRecado(); // recado digitado antes de a entrada vencer
     }
-    const [rotulo, cor] = ETIQUETA[e.status] || [e.status, ""];
+    const [rotulo, cor] = e.preso ? ["Parou no meio", "laranja"] : ETIQUETA[e.status] || [e.status, ""];
     return h("div", { class: "cartao" },
-      h("div", { class: "botoes" }, h("span", { class: `etiqueta ${cor}`, text: rotulo }), h("span", { class: "miudo", text: `${e.de} · ${quando(e.criado)}` })),
-      e.decisao && h("p", { class: "miudo", text: e.decisao }),
-      e.recado && h("p", {}, h("b", { text: "Recado: " }), e.recado),
-      h("ul", { class: "lista" }, e.mudancas.map((m) => h("li", {}, h("strong", { text: m.nome }),
-        h("div", { class: "antes-depois" }, h("div", {}, h("b", { text: "Antes" }), mostrar(m.antes)), h("div", {}, h("b", { text: "Depois" }), mostrar(m.depois)))))),
-      msg, acoes);
+      // Nome e e-mail mascarado de quem enviou: separa duas pessoas com o mesmo nome (contrato C5; item 43).
+      h("div", { class: "botoes" }, h("span", { class: `etiqueta ${cor}`, text: rotulo }), h("span", { class: "miudo", text: `${comEmail(e.de, e.deEmail)} · ${quando(e.criado)}` })),
+      e.decisao && h("p", { class: e.preso ? "erro" : "miudo", text: e.decisao }),
+      e.recado && h("p", { class: "valor-texto" }, h("b", { text: "Recado: " }), e.recado),
+      h("ul", { class: "lista" }, e.mudancas.map((m) => itemDeMudanca(m, mapa))),
+      msg, acoes, caixaRecado);
   });
   await casca(voltar(), h("h1", { text: "Aprovações" }), cartoes.length ? cartoes : h("div", { class: "cartao" }, h("p", { text: "Nenhum envio por enquanto." })));
 }
 
 // ---------- histórico ----------
 async function telaHistorico() {
-  const r = await pedir("historico");
+  const [r, mapa] = await Promise.all([pedir("historico"), regras()]);
+  if (r.status !== 200) return telaFalhou("Histórico", r);
   const lista = r.dados.publicacoes || [];
-  const cartoes = lista.map((p) => {
+  // Qual publicação está no ar agora: a do código que o site mostra em /versao.json (item 8). As mais novas que
+  // ela ainda não chegaram. Sem /versao.json, ou com o site numa versão feita fora do painel, não diz nada.
+  // Só pergunta ao site se alguma publicação tiver o código (sem ele não há o que comparar; contrato C2).
+  const noAr = lista.some((p) => commitDe(p)) ? await lerVersaoNoAr() : null;
+  const k = noAr ? lista.findIndex((p) => mesmoCommit(noAr, commitDe(p))) : -1;
+  const cartoes = lista.map((p, i) => {
     const msg = h("p", { class: "erro" });
     const desfazer = ehResponsavel() && h("button", { class: "botao claro", type: "button" }, "Desfazer esta publicação");
     if (desfazer) {
-      const pedirDesfazer = async (escolhas) => {
+      const nomes = Object.fromEntries(p.mudancas.map((m) => [m.caminho, m.nome]));
+      const pedirDesfazer = async (escolhas, onde = msg) => {
         const res = await pedir("desfazer", { metodo: "POST", corpo: { id: p.id, escolhas } });
-        resultadoPublicacao(res, msg, (novas) => pedirDesfazer({ ...escolhas, ...novas }));
+        await resultadoPublicacao(res, onde, (novas, m) => pedirDesfazer({ ...escolhas, ...novas }, m), { nomes });
       };
       desfazer.addEventListener("click", async () => {
         if (!confirm("Voltar estes campos para como estavam antes? Conta 1 publicação do mês.")) return;
@@ -924,11 +1936,15 @@ async function telaHistorico() {
         ocupado(desfazer, false);
       });
     }
+    const noArAgora = k >= 0 && i === k;
+    const aindaIndo = k >= 0 && i < k;
     return h("div", { class: "cartao" },
-      h("div", { class: "botoes" }, h("span", { class: `etiqueta ${p.tipo === "desfazer" ? "cinza" : "verde"}`, text: p.tipo === "desfazer" ? "Desfeita" : "Publicada" }),
+      h("div", { class: "botoes" }, etiqueta(p.tipo === "desfazer" ? "Desfeita" : "Publicada", p.tipo === "desfazer" ? "cinza" : "verde"),
+        noArAgora && etiqueta("No ar agora", "verde"),
+        aindaIndo && etiqueta(Date.now() - p.quando < 30 * 60_000 ? "Indo para o site" : "Ainda não está no ar", "laranja"),
         h("span", { class: "miudo", text: `${p.quem} · ${quando(p.quando)}` })),
-      h("ul", { class: "lista" }, p.mudancas.map((m) => h("li", {}, h("strong", { text: m.nome }),
-        h("div", { class: "antes-depois" }, h("div", {}, h("b", { text: "Antes" }), mostrar(m.antes)), h("div", {}, h("b", { text: "Depois" }), mostrar(m.depois)))))),
+      p.aviso && h("p", { class: "ajuda", role: "status", text: p.aviso }),
+      h("ul", { class: "lista" }, p.mudancas.map((m) => itemDeMudanca(m, mapa))),
       msg, desfazer);
   });
   await casca(voltar(), h("h1", { text: "Histórico" }), cartoes.length ? cartoes : h("div", { class: "cartao" }, h("p", { text: "Nenhuma publicação pelo painel ainda." })));
@@ -980,9 +1996,11 @@ function telaConvidar() {
 }
 
 function telaNovaSenha(pessoa) {
-  formReconfirmar(`Nova senha para ${pessoa.nome}`, "Gere um link para a pessoa criar uma senha nova. As entradas antigas dela deixam de valer.", [],
+  formReconfirmar(`Nova senha para ${pessoa.nome}`, pessoa.ativo
+    ? "Gere um link para a pessoa criar uma senha nova. Quando ela criar a senha nova, as entradas antigas dela deixam de valer e a senha antiga não entra mais."
+    : "O acesso está desligado. Gere um link para a pessoa criar uma senha nova: o acesso volta com a senha nova, e a antiga não entra mais.", [],
     async (email, senha) => {
-      const r = await pedir("convites", { metodo: "POST", corpo: { tipo: "nova-senha", para: pessoa.email, email, senha } });
+      const r = await pedir("convites", { metodo: "POST", corpo: { tipo: "nova-senha", para: pessoa.id || pessoa.email, email, senha } });
       if (r.status !== 201) return r.dados.erro;
       mostrarLink(`Link de nova senha para ${pessoa.nome}`, r.dados.link, "Aqui está o link para criar uma senha nova no painel da Brumar. Ele funciona uma vez só e vale por 48 horas.");
     });
@@ -991,7 +2009,11 @@ function telaNovaSenha(pessoa) {
 async function telaAcessos() {
   if (!ehResponsavel()) return ir("");
   const [pessoas, convites] = await Promise.all([pedir("acessos"), pedir("convites")]);
+  if (pessoas.status !== 200) return telaFalhou("Acessos", pessoas);
   const msg = h("p", { class: "erro" });
+  // Quem não é a administradora recebe o e-mail das outras pessoas mascarado ("a***@loja.com"): a tela age pelo "id"
+  // de cada pessoa (rodada 2 da conferência; E2).
+  const quemE = (p) => (p.id ? { id: p.id } : { email: p.email });
   const linhas = (pessoas.dados.pessoas || []).map((p) => {
     const acoes = h("div", { class: "botoes" });
     if (p.podeMexer) {
@@ -999,18 +2021,20 @@ async function telaAcessos() {
       ligar.addEventListener("click", async () => {
         if (p.ativo && !confirm(`Desligar o acesso de ${p.nome}? Ela sai do painel na hora.`)) return;
         ocupado(ligar, true);
-        const r = await pedir("acessos", { metodo: "POST", corpo: { email: p.email, acao: p.ativo ? "desligar" : "religar" } });
+        const r = await pedir("acessos", { metodo: "POST", corpo: { ...quemE(p), acao: p.ativo ? "desligar" : "religar" } });
         if (r.status !== 200) { ocupado(ligar, false); return mensagem(msg, r.dados.erro); }
         telaAcessos();
       });
       acoes.append(ligar);
-      if (p.ativo) acoes.append(h("button", { class: "botao claro", type: "button", onclick: () => telaNovaSenha(p) }, "Nova senha"));
+      // Também para quem está desligada: é o jeito seguro de religar depois de celular roubado ou senha vazada
+      // ("Religar" volta com a senha de antes; auditoria 2, item 6).
+      acoes.append(h("button", { class: "botao claro", type: "button", onclick: () => telaNovaSenha(p) }, "Nova senha"));
       if (eu.papel === "admin" && !p.ativo) {
         const apagar = h("button", { class: "botao perigo", type: "button" }, "Apagar dados");
         apagar.addEventListener("click", async () => {
           if (!confirm(`Apagar de vez os dados de ${p.nome}? Não dá para desfazer.`)) return;
           ocupado(apagar, true);
-          const r = await pedir("acessos", { metodo: "POST", corpo: { email: p.email, acao: "apagar" } });
+          const r = await pedir("acessos", { metodo: "POST", corpo: { ...quemE(p), acao: "apagar" } });
           if (r.status !== 200) { ocupado(apagar, false); return mensagem(msg, r.dados.erro); }
           telaAcessos();
         });
@@ -1020,33 +2044,37 @@ async function telaAcessos() {
         const destravar = h("button", { class: "botao claro", type: "button" }, "Destravar");
         destravar.addEventListener("click", async () => {
           ocupado(destravar, true);
-          const r = await pedir("acessos", { metodo: "POST", corpo: { email: p.email, acao: "destravar" } });
+          const r = await pedir("acessos", { metodo: "POST", corpo: { ...quemE(p), acao: "destravar" } });
           ocupado(destravar, false);
           mensagem(msg, r.status === 200 ? `${p.nome} pode tentar entrar de novo.` : r.dados.erro, r.status === 200 ? "sucesso" : "erro");
         });
         acoes.append(destravar);
       }
     }
-    return h("li", {}, h("strong", { text: p.nome }), " ", h("span", { class: `etiqueta ${p.ativo ? "" : "cinza"}`, text: p.ativo ? NOMES_PAPEL[p.papel] : "Desligado" }),
-      h("div", { class: "miudo", text: p.email }), acoes);
+    return h("li", {}, h("strong", { text: p.nome }), " ", h("span", { class: `etiqueta ${p.ativo ? "" : "cinza"}`, text: p.ativo ? NOMES_PAPEL[p.papel] || p.papel : "Desligado" }),
+      h("div", { class: "miudo", text: p.email }),
+      !p.ativo && p.podeMexer && h("p", { class: "ajuda", text: "Nova senha: a pessoa cria uma senha nova pelo link; o acesso volta com a senha nova e a antiga não entra mais. Religar acesso: volta com a mesma senha de antes (não use se a senha vazou ou o celular foi roubado)." }),
+      acoes);
   });
   const abertos = (convites.dados.convites || []).map((c) => {
     const cancelar = h("button", { class: "botao perigo", type: "button" }, "Cancelar");
     cancelar.addEventListener("click", async () => {
       ocupado(cancelar, true);
-      await pedir("convites", { metodo: "DELETE", corpo: { id: c.id } });
+      const r = await pedir("convites", { metodo: "DELETE", corpo: { id: c.id } });
+      if (r.status !== 200) { ocupado(cancelar, false); return mensagem(msg, r.dados.erro); }
       telaAcessos();
     });
-    return h("li", {}, h("strong", { text: c.tipo === "cadastro" ? `Convite de ${NOMES_PAPEL[c.papel].toLowerCase()}` : `Nova senha de ${c.email}` }),
+    return h("li", {}, h("strong", { text: c.tipo === "cadastro" ? `Convite de ${(NOMES_PAPEL[c.papel] || "pessoa").toLowerCase()}` : `Nova senha de ${c.email}` }),
       h("div", { class: "miudo", text: `Criado por ${c.criadoPor} · vence ${quando(c.expira)}` }), h("div", { class: "botoes" }, cancelar));
   });
   await casca(voltar(), h("h1", { text: "Acessos" }),
     h("button", { class: "botao verde cheio", type: "button", onclick: telaConvidar }, "+ Convidar pessoa"),
     h("div", { class: "cartao" }, h("h2", { text: "Quem tem acesso" }), msg, linhas.length ? h("ul", { class: "lista" }, linhas) : h("p", { text: "Ninguém ainda." })),
+    convites.status !== 200 && h("div", { class: "cartao" }, h("h2", { text: "Convites ainda não usados" }), h("p", { class: "erro", text: convites.dados.erro })),
     abertos.length > 0 && h("div", { class: "cartao" }, h("h2", { text: "Convites ainda não usados" }), h("ul", { class: "lista" }, abertos)),
     (pessoas.dados.registro || []).length > 0 && h("div", { class: "cartao" }, h("h2", { text: "Últimas mudanças de acesso" }),
       h("ul", { class: "lista" }, pessoas.dados.registro.map((r) => h("li", {},
-        h("span", { text: `${r.quem} ${r.acao}` }), r.alvo && h("span", { class: "miudo", text: ` · ${r.alvo}` }),
+        h("span", { text: `${comEmail(r.quem, r.quemEmail)} ${papelLegivel(r.acao)}` }), r.alvo && h("span", { class: "miudo", text: ` · ${r.alvo}` }),
         h("div", { class: "miudo", text: quando(r.em) }))))));
 }
 
@@ -1074,18 +2102,23 @@ function telaSenha() {
 // ---------- avisos ----------
 async function telaAvisos() {
   const r = await pedir("avisos");
+  if (r.status !== 200) return telaFalhou("Avisos", r);
   const lista = r.dados.avisos || [];
   await casca(voltar(), h("h1", { text: "Avisos" }),
     h("div", { class: "cartao" }, lista.length ? h("ul", { class: "lista" }, lista.map((a) => h("li", { class: a.lido ? "aviso-item" : "aviso-item novo" },
-      h("strong", { text: a.titulo }), h("div", { class: "miudo", text: quando(a.em) }), h("p", { text: a.texto }))))
+      h("strong", { text: a.titulo }), h("div", { class: "miudo", text: quando(a.em) }), h("p", { class: "aviso-texto", text: a.texto }))))
       : h("p", { text: "Nenhum aviso." })));
-  if (lista.some((a) => !a.lido)) pedir("avisos", { metodo: "POST", corpo: { acao: "lidos" } });
+  // Marca como lidos só os avisos que a tela mostrou: um que chegue entre a leitura e este pedido continua "novo"
+  // (auditoria 2, item 40). O servidor aceita até 50 por vez; o resto fica para a próxima visita.
+  const ids = lista.filter((a) => !a.lido && typeof a.id === "string").map((a) => a.id).slice(0, 50);
+  if (ids.length) pedir("avisos", { metodo: "POST", corpo: { acao: "lidos", ids } });
 }
 
 // ---------- medidor (administradora) ----------
 async function telaMedidor() {
   if (eu.papel !== "admin") return ir("");
   const r = await pedir("cota");
+  if (r.status !== 200) return telaFalhou("Medidor de publicações", r);
   const c = r.dados;
   const msg = h("p", { class: "erro" });
   const leitura = campo("Créditos usados até hoje (tela Uso e faturamento da Netlify)", { type: "number", min: 0, step: 1, inputmode: "numeric" });

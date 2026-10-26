@@ -23,12 +23,14 @@
     const p = caminho.split(".");
     return Object.keys(ESQUEMA.campos).find((m) => { const x = m.split("."); return x.length === p.length && x.every((y, i) => y === "*" || y === p[i]); });
   };
+  const ler = (obj, partes) => partes.reduce((a, k) => (a && typeof a === "object" && Object.hasOwn(a, k) ? a[k] : undefined), obj);
+  // Com o nome do item, como o servidor (lib/esquema.mjs, nomeDe com os dados): "Para quem é · Gloss Brumar Matizado".
   const nomeDe = (caminho) => {
     const m = modeloDe(caminho); if (!m) return caminho;
     const r = ESQUEMA.campos[m]; if (m === caminho) return r.nome || caminho;
-    const p = caminho.split("."); return `${r.nome} · ${m.split(".").map((x, i) => (x === "*" ? p[i] : null)).filter(Boolean).join(" · ")}`;
+    const p = caminho.split(".");
+    return `${r.nome} · ${m.split(".").flatMap((x, i) => (x === "*" ? [nomeDoItem(r, p[i], ler(E.site[p[0]], p.slice(1, i + 1)))] : [])).join(" · ")}`;
   };
-  const ler = (obj, partes) => partes.reduce((a, k) => (a && typeof a === "object" && Object.hasOwn(a, k) ? a[k] : undefined), obj);
   const gravar = (obj, partes, v) => {
     let a = obj;
     for (const k of partes.slice(0, -1)) { if (!a || typeof a !== "object" || !Object.hasOwn(a, k)) return false; a = a[k]; }
@@ -40,14 +42,17 @@
   function validar(caminho, valor) {
     const m = modeloDe(caminho); if (!m) return "Este campo não pode ser mudado pelo painel.";
     const r = ESQUEMA.campos[m]; const n = r.nome || caminho;
-    const proibida = (t) => (r.proibidas || []).find((p) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().includes(p));
+    // Sem acento e sem maiúscula dos dois lados, como o servidor.
+    const semAcento = (s) => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    const proibida = (t) => (r.proibidas || []).find((p) => semAcento(t).includes(semAcento(p)));
     if (r.tipo === "texto") {
       if (typeof valor !== "string") return `${n}: precisa ser um texto.`;
       if (/[<>]/.test(valor)) return `${n}: não use os sinais < e >.`;
       if (valor.trim().length > r.max) return `${n}: no máximo ${r.max} letras.`;
       if (proibida(valor)) return `${n}: a palavra "${proibida(valor)}" não pode ser usada (Brand Book).`;
     }
-    if (r.tipo === "link" && !/^https:\/\//.test(valor)) return `${n}: o link precisa começar com https://`;
+    // Link: https:// ou atalho do site ("/loja/"), como no servidor (auditoria 2, item 45).
+    if (r.tipo === "link" && !/^https:\/\//.test(valor) && !/^\/(?:[a-z0-9]+(?:-[a-z0-9]+)*\/)*(?:#[a-z0-9]+(?:-[a-z0-9]+)*)?$/.test(valor)) return `${n}: o link precisa começar com https:// (ou ser uma página do site, como /loja/)`;
     if (r.tipo === "campanhas") {
       for (const [i, c] of valor.entries()) {
         if (!c.titulo) return `${n} (${i + 1}): coloque o título.`;
@@ -55,28 +60,69 @@
         if (proibida(`${c.titulo} ${c.texto}`)) return `${n} (${i + 1}): palavra proibida pelo Brand Book.`;
       }
     }
+    if (r.tipo === "lista-de-textos") return listaDeTextos(valor, r, n, proibida).erro || null;
     return null;
   }
 
+  // Lista de frases (contrato C1), igual ao servidor (lib/esquema.mjs, mesmas mensagens): quebra de linha vira
+  // espaço, tira os espaços das pontas, descarta frase vazia, recusa "<" e ">", frase acima de max-letras, palavra
+  // proibida em cada frase e lista acima de max-itens. A frase conta pela posição da caixa na tela. Aceita "*" e
+  // lista vazia (o bloco some no site). Devolve { valor } limpo ou { erro }.
+  function listaDeTextos(valor, r, n, proibida) {
+    const maxItens = Number.isInteger(r["max-itens"]) ? r["max-itens"] : 12;
+    const maxLetras = Number.isInteger(r["max-letras"]) ? r["max-letras"] : 200;
+    if (!Array.isArray(valor) || valor.some((t) => typeof t !== "string")) return { erro: `${n}: precisa ser uma lista de frases.` };
+    const frases = [];
+    for (const [i, t] of valor.entries()) {
+      const limpa = t.replace(/\s*[\r\n]+\s*/g, " ").trim();
+      if (!limpa) continue;
+      if (/[<>]/.test(limpa)) return { erro: `${n}: na frase ${i + 1}, não use os sinais < e >.` };
+      if (limpa.length > maxLetras) return { erro: `${n}: a frase ${i + 1} passou de ${maxLetras} letras.` };
+      if (proibida(limpa)) return { erro: `${n}: a frase ${i + 1} usa a palavra "${proibida(limpa)}", que não pode ser usada (Brand Book).` };
+      frases.push(limpa);
+    }
+    if (frases.length > maxItens) return { erro: `${n}: no máximo ${maxItens} frases (tem ${frases.length}).` };
+    return { valor: frases };
+  }
+
+  // Mesmas regras de funcoes/conteudo.mjs: nome do item ("nomeDoItem"), campo sem "*" que vira item, e grupo com
+  // mais de uma lista (Vídeos) com o item "arquivo:chave", uma lista depois da outra (duas listas do mesmo arquivo:
+  // "arquivo:<posição da lista>-chave", como idDoItem).
+  function nomeDoItem(r, k, it) {
+    const base = (it && typeof it.nome === "string" && it.nome) || k;
+    const m = r.nomeDoItem;
+    if (m && typeof m === "object") return m[k] || base;
+    if (typeof m !== "string" || !m) return base;
+    return m.replace(/\{([a-z0-9-]+)\}/g, (_, c) => (c === "nome" ? base : (it && typeof it[c] === "string" && it[c]) || k));
+  }
+  const idDoItem = (chave, fonte, arquivo, fontes) => {
+    if (!chave || fontes.length < 2) return chave;
+    return fontes.filter((f) => f.split(".")[0] === arquivo).length > 1 ? `${arquivo}:${fontes.indexOf(fonte) + 1}-${chave}` : `${arquivo}:${chave}`;
+  };
   function conteudo() {
-    const grupos = ESQUEMA.grupos.map((g) => ({
-      id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "",
-      campos: g.campos.flatMap((modelo, pos) => {
+    const grupos = ESQUEMA.grupos.map((g) => {
+      const casos = g.campos.flatMap((modelo, pos) => {
+        const r = ESQUEMA.campos[modelo];
         const p = modelo.split("."); const i = p.indexOf("*");
-        const casos = i < 0 ? [{ caminho: modelo, item: "", chave: "", ordem: -1 }]
-          : Object.keys(ler(E.site[arq(modelo)], p.slice(1, i)) || {}).map((k, ordem) => {
-            const it = ler(E.site[arq(modelo)], [...p.slice(1, i), k]);
-            return { caminho: [...p.slice(0, i), k, ...p.slice(i + 1)].join("."), item: (it && it.nome) || k, chave: k, ordem };
-          });
-        return casos.map(({ caminho, item, chave, ordem }) => {
-          const r = ESQUEMA.campos[modelo];
-          const rasc = E.rascunho[caminho];
-          return { caminho, tipo: r.tipo, max: r.max, opcoes: r.opcoes, rotulos: r.rotulos, ajuda: r.ajuda, item: chave, itemNome: item, rotulo: r.nome,
-            nome: item ? `${r.nome} · ${item}` : r.nome, noSite: ler(E.site[arq(caminho)], lugar(caminho)),
-            ...(rasc && { rascunho: { valor: rasc.valor, por: rasc.por, em: rasc.em } }), _o: [ordem, pos] };
-        });
-      }).sort((a, b) => a._o[0] - b._o[0] || a._o[1] - b._o[1]).map(({ _o, ...c }) => c),
-    }));
+        if (i < 0) {
+          return [typeof r.nomeDoItem === "string" ? { caminho: modelo, item: r.nomeDoItem, chave: p.slice(1).join("-"), ordem: 0, fonte: modelo, arquivo: p[0], modelo, pos }
+            : { caminho: modelo, item: "", chave: "", ordem: -1, fonte: "", modelo, pos }];
+        }
+        return Object.keys(ler(E.site[arq(modelo)], p.slice(1, i)) || {}).map((k, ordem) => ({
+          caminho: [...p.slice(0, i), k, ...p.slice(i + 1)].join("."), item: nomeDoItem(r, k, ler(E.site[arq(modelo)], [...p.slice(1, i), k])),
+          chave: k, ordem, fonte: p.slice(0, i).join("."), arquivo: p[0], modelo, pos }));
+      });
+      const fontes = [...new Set(casos.filter((x) => x.fonte).map((x) => x.fonte))];
+      const campos = casos.map(({ caminho, item, chave, ordem, fonte, arquivo, modelo, pos }) => {
+        const r = ESQUEMA.campos[modelo];
+        const rasc = E.rascunho[caminho];
+        return { caminho, tipo: r.tipo, max: r.max, "max-itens": r["max-itens"], "max-letras": r["max-letras"], opcoes: r.opcoes, rotulos: r.rotulos, ajuda: r.ajuda,
+          item: idDoItem(chave, fonte, arquivo, fontes), itemNome: item, rotulo: r.nome,
+          nome: item ? `${r.nome} · ${item}` : r.nome, noSite: ler(E.site[arq(caminho)], lugar(caminho)),
+          ...(rasc && { rascunho: { valor: rasc.valor, por: rasc.por, em: rasc.em } }), _o: [fonte ? fontes.indexOf(fonte) : -1, ordem, pos] };
+      }).sort((a, b) => a._o[0] - b._o[0] || a._o[1] - b._o[1] || a._o[2] - b._o[2]).map(({ _o, ...c }) => c);
+      return { id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "", campos };
+    });
     return { grupos, publicarLigado: true };
   }
 
@@ -97,7 +143,7 @@
     const id = `${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}-${Math.random().toString(16).slice(2, 8)}`;
     E.historico.unshift({ id, tipo, desfazendo: desfazendo || null, quem, quando: agora(), mudancas: aplicadas });
     E.usadas += 1; guardar();
-    return ok({ ok: true, id, quando: agora(), mudancas: aplicadas.map((a) => a.nome), cota: cota() });
+    return ok({ ok: true, id, quando: agora(), mudancas: aplicadas.map((a) => a.nome), caminhos: aplicadas.map((a) => a.caminho), cota: cota() });
   }
 
   async function rota(url, metodo, corpo) {
@@ -110,12 +156,31 @@
       case "avisos": return ok(metodo === "GET" ? { naoLidos: 0, avisos: [] } : { ok: true });
       case "conteudo": return ok(conteudo());
       case "rascunho": {
+        // "visto" (contrato C3): o "em" que a tela viu (ou null, sem rascunho). Se o rascunho do campo mudou depois
+        // (outra aba, por exemplo), recusa sem gravar nada, como o servidor.
+        const mudouDesde = (caminho, visto) => visto !== undefined && (E.rascunho[caminho]?.em ?? null) !== visto;
+        const recusar = (caminho) => ok({ erro: "Outra pessoa mudou isto agora há pouco. Veja a versão nova antes de continuar.",
+          caminho, atual: E.rascunho[caminho] ? E.rascunho[caminho].valor : null, em: E.rascunho[caminho]?.em ?? null }, 409);
         if (metodo === "POST") {
           const erros = dados.mudancas.map((m) => ({ caminho: m.caminho, erro: validar(m.caminho, m.valor) })).filter((e) => e.erro);
           if (erros.length) return ok({ erro: "Algumas mudanças não foram salvas. Confira os campos marcados.", campos: erros }, 400);
-          for (const m of dados.mudancas) E.rascunho[m.caminho] = { valor: typeof m.valor === "string" ? m.valor.trim() : m.valor, por: EU.nome, em: agora() };
+          const mudou = dados.mudancas.find((m) => mudouDesde(m.caminho, m.visto));
+          if (mudou) return recusar(mudou.caminho);
+          for (const m of dados.mudancas) {
+            // "antes" = o valor do site da primeira vez (a tela de Publicar mostra o antes e o depois).
+            const anterior = E.rascunho[m.caminho];
+            const r = ESQUEMA.campos[modeloDe(m.caminho)];
+            const valor = r?.tipo === "lista-de-textos" ? listaDeTextos(m.valor, r, r.nome, () => null).valor
+              : typeof m.valor === "string" ? m.valor.trim() : m.valor;
+            E.rascunho[m.caminho] = { valor, por: EU.nome, em: agora(),
+              ...(anterior && "antes" in anterior ? { antes: anterior.antes } : m.antes !== undefined ? { antes: m.antes } : {}) };
+          }
         }
-        if (metodo === "DELETE") { if (!dados.caminhos.length) E.rascunho = {}; for (const c of dados.caminhos) delete E.rascunho[c]; }
+        if (metodo === "DELETE") {
+          if (dados.caminhos.length === 1 && mudouDesde(dados.caminhos[0], dados.visto)) return recusar(dados.caminhos[0]);
+          if (!dados.caminhos.length) E.rascunho = {};
+          for (const c of dados.caminhos) delete E.rascunho[c];
+        }
         guardar();
         return ok({ total: Object.keys(E.rascunho).length, mudancas: E.rascunho, atualizado: agora() });
       }
@@ -126,6 +191,11 @@
       }
       case "publicar": {
         if (metodo === "GET") return ok({ total: Object.keys(E.rascunho).length, mudancas: Object.entries(E.rascunho).map(([c, m]) => ({ caminho: c, nome: nomeDe(c), por: m.por, em: m.em })) });
+        // Publica só a lista que a tela mostrou (auditoria 2, item 23).
+        const vistas = dados.vistas;
+        if (vistas && (Object.keys(vistas).length !== Object.keys(E.rascunho).length || Object.entries(E.rascunho).some(([c, m]) => vistas[c] !== m.em))) {
+          return ok({ erro: "O rascunho mudou desde que você abriu esta tela. Nada foi publicado: confira a lista de novo.", rascunhoMudou: true }, 409);
+        }
         const r = publicar(E.rascunho, EU.nome, "publicacao");
         E.rascunho = {}; guardar(); return r;
       }
@@ -135,10 +205,11 @@
         return publicar(Object.fromEntries(p.mudancas.map((m) => [m.caminho, { valor: m.antes }])), EU.nome, "desfazer", p.id);
       }
       case "aprovacoes": return ok({ envios: [] });
+      // Como o servidor: quem não é a administradora vê o e-mail das outras pessoas mascarado, e a tela age pelo "id".
       case "acessos": return ok(metodo === "GET" ? { pessoas: [
-        { nome: "Bruna", email: "bruna@exemplo.com", papel: "responsavel", ativo: true, podeMexer: false },
-        { nome: "CEO da marca", email: "ceo@exemplo.com", papel: "responsavel", ativo: true, podeMexer: false },
-        { nome: "Ana (exemplo)", email: "ana@exemplo.com", papel: "funcionaria", ativo: true, podeMexer: true }], registro: [] }
+        { nome: "Bruna", email: "bruna@exemplo.com", id: "1".repeat(64), papel: "responsavel", ativo: true, podeMexer: false },
+        { nome: "CEO da marca", email: "c***@exemplo.com", id: "2".repeat(64), papel: "responsavel", ativo: true, podeMexer: false },
+        { nome: "Ana (exemplo)", email: "a***@exemplo.com", id: "3".repeat(64), papel: "funcionaria", ativo: true, podeMexer: true }], registro: [] }
         : { ok: true, ativo: dados.acao === "religar" });
       case "convites": return ok(metodo === "GET" ? { convites: [] }
         : { id: "demo", link: `${location.origin}${location.pathname}#convite/exemplo-de-convite`, papel: dados.papel || "funcionaria", expira: agora() + 1728e5 }, metodo === "POST" ? 201 : 200);
