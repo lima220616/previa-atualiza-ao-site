@@ -92,9 +92,25 @@ function ajustarPrevia() {
   for (const b of estrutura.botoesModo) b.classList.toggle("ativo", b.dataset.modo === modoPrevia);
 }
 
-// Recarrega a prévia (depois de Salvar, Descartar ou Publicar).
-function atualizarPrevia() {
-  try { estrutura?.iframe?.contentWindow?.location.reload(); } catch { /* prévia ainda carregando */ }
+// Monta (de novo) a prévia: dados do site com o rascunho → previa/previa.js (molde da Opção A ou prévia simplificada)
+// → iframe "srcdoc". Assim a página não precisa ser aberta numa moldura, e as regras de segurança do site
+// (frame-ancestors 'none') continuam fechadas. Chamada ao abrir e depois de Salvar, Descartar ou Publicar.
+let montandoPrevia = 0;
+async function atualizarPrevia() {
+  const iframe = estrutura?.iframe;
+  if (!iframe) return;
+  const vez = ++montandoPrevia; // se pedirem de novo no meio, só a última montagem vale
+  const r = await pedir("previa");
+  if (vez !== montandoPrevia || estrutura?.iframe !== iframe) return;
+  let html;
+  if (r.status !== 200) {
+    html = `<!doctype html><meta charset="utf-8"><p style="font-family:sans-serif;padding:16px">${(r.dados.erro || "Não foi possível montar a prévia.").replace(/[<>&]/g, "")}</p>`;
+  } else {
+    const base = new URL("previa/", document.baseURI).href;
+    const modulo = await import(new URL("previa.js", base).href);
+    html = await modulo.htmlDaPrevia(r.dados, base);
+  }
+  if (vez === montandoPrevia && estrutura?.iframe === iframe) iframe.srcdoc = html;
 }
 
 function garantirEstrutura() {
@@ -127,7 +143,7 @@ function garantirEstrutura() {
   estrutura = { raiz, menu, fundo, meio, iframe: null, moldura: null, botoesModo: [] };
   // A prévia só é montada em tela larga (no celular ela gastaria leituras à toa).
   if (window.matchMedia(TELA_LARGA).matches) {
-    const iframe = h("iframe", { class: "previa-iframe", src: "previa/", title: "Prévia do site" });
+    const iframe = h("iframe", { class: "previa-iframe", title: "Prévia do site" });
     const moldura = h("div", { class: "previa-moldura" }, iframe);
     const botoesModo = ["celular", "computador"].map((modo) => h("button", { class: "botao claro", type: "button", "data-modo": modo, onclick: () => {
       modoPrevia = modo;
@@ -142,6 +158,7 @@ function garantirEstrutura() {
   }
   app.replaceChildren(raiz);
   setTimeout(ajustarPrevia, 0);
+  if (estrutura.iframe) atualizarPrevia();
   pedir("conteudo").then((r) => {
     if (r.status !== 200) return;
     gruposMenu.replaceChildren(...r.dados.grupos.map((g) => itemLateral(g.icone || "✏️", g.titulo, `conteudo/${g.id}`)));
