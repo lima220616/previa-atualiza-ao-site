@@ -126,13 +126,30 @@
     return { grupos, publicarLigado: true };
   }
 
+  // Medidor como o do servidor (lib/cota.mjs), com as mesmas mensagens. "Ver com créditos baixos" (botão na faixa
+  // amarela; pedido de 26/10): o mês começa com 22 de 25 usadas, para a faixa de créditos baixos aparecer; cada
+  // publicação da demonstração continua contando a partir daí.
+  const MENSAGENS = { verde: "", laranja: "Junte as mudanças antes de publicar.",
+    vermelho: "Restam poucas publicações este mês. Junte tudo numa publicação só.",
+    travado: "A cota de segurança do mês acabou. Isso protege o site de sair do ar. Renova em 21/11/2026. Suas mudanças ficam salvas." };
   const cota = () => {
-    const restantes = Math.max(0, 25 - E.usadas);
+    const usadas = E.creditosBaixos ? 22 + Math.max(0, E.usadas - E.creditosBaixos.desde) : E.usadas;
+    const restantes = Math.max(0, 25 - usadas);
     const cor = restantes === 0 ? "travado" : restantes <= 2 ? "vermelho" : restantes <= 12.5 ? "laranja" : "verde";
-    return { usadas: E.usadas, cota: 25, restantes, cor, renovaEm: "21/11/2026", texto: `Publicações este mês: ${E.usadas} de 25 · renova em 21/11/2026`, mensagem: "" };
+    return { usadas, cota: 25, restantes, cor, renovaEm: "21/11/2026", texto: `Publicações este mês: ${usadas} de 25 · renova em 21/11/2026`,
+      mensagem: MENSAGENS[cor], baixouPelaLeitura: false };
+  };
+  window.creditosBaixosDemo = (ligar) => {
+    E.creditosBaixos = ligar ? { desde: E.usadas } : null;
+    guardar();
+    // A faixa volta a aparecer mesmo que alguém já tenha tocado em "Entendi" nesta aba.
+    try { sessionStorage.removeItem("painel-creditos-entendi"); } catch { /* sem armazenamento */ }
+    location.reload();
   };
 
   function publicar(mudancas, quem, tipo, desfazendo) {
+    // Cota do mês acabou: não publica, como o servidor (as mudanças ficam salvas).
+    if (cota().restantes <= 0) return ok({ erro: cota().mensagem, cota: cota() }, 429);
     const aplicadas = [];
     for (const [c, m] of Object.entries(mudancas)) {
       const antes = ler(E.site[arq(c)], lugar(c));
@@ -150,7 +167,12 @@
     const caminho = url.pathname.replace(/^.*\/painel\/api\//, "");
     const dados = corpo ? JSON.parse(corpo) : {};
     switch (caminho) {
-      case "eu": case "entrar": return ok({ ...EU, expira: agora() + 432e5 });
+      // A mesma "entrada" a cada recarga (como no servidor, que guarda quando ela vence): o "Entendi" da faixa de
+      // créditos baixos vale até a próxima entrada.
+      case "eu": case "entrar": {
+        if (!(E.expira > agora())) { E.expira = agora() + 432e5; guardar(); }
+        return ok({ ...EU, expira: E.expira });
+      }
       case "sair": return ok({ ok: true });
       case "cota": return ok(cota());
       case "avisos": return ok(metodo === "GET" ? { naoLidos: 0, avisos: [] } : { ok: true });
@@ -197,7 +219,8 @@
           return ok({ erro: "O rascunho mudou desde que você abriu esta tela. Nada foi publicado: confira a lista de novo.", rascunhoMudou: true }, 409);
         }
         const r = publicar(E.rascunho, EU.nome, "publicacao");
-        E.rascunho = {}; guardar(); return r;
+        if (r.status === 200) { E.rascunho = {}; guardar(); } // sem cota, as mudanças ficam salvas
+        return r;
       }
       case "historico": return ok({ publicacoes: E.historico });
       case "desfazer": {
@@ -230,7 +253,12 @@
       botao.type = "button";
       botao.textContent = "Recomeçar";
       botao.addEventListener("click", () => { if (confirm("Apagar o que foi mexido e começar de novo?")) window.recomecarDemo(); });
-      faixa.append(texto, botao);
+      // Para ver a faixa de créditos baixos do topo (e voltar ao normal).
+      const creditos = document.createElement("button");
+      creditos.type = "button";
+      creditos.textContent = E.creditosBaixos ? "Voltar aos créditos normais" : "Ver com créditos baixos";
+      creditos.addEventListener("click", () => window.creditosBaixosDemo(!E.creditosBaixos));
+      faixa.append(texto, creditos, botao);
       document.body.prepend(faixa);
     });
   }

@@ -211,6 +211,34 @@ function comPrazo(promessa, ms) {
   });
 }
 
+// Faixa de créditos baixos no topo (pedido de 26/10): aparece com o medidor laranja, vermelho ou travado, ou quando a
+// cota caiu pelo gasto real anotado (baixouPelaLeitura). Quem publica lê "junte e publique"; a funcionária, que não
+// publica, lê que a Bruna vai juntar. A linha menor diz quantas publicações restam até renovar ("21/11/2026" → "21/11").
+// Acabou (travado): "junte e publique" não vale mais, então a faixa diz que as mudanças ficam salvas e quando dá para
+// publicar de novo (revisão de 26/10: antes as duas linhas se contradiziam).
+// Devolve null (sem faixa) ou { titulo, linha, tom }.
+function faixaDeCreditos(c, papel) {
+  if (!c || typeof c !== "object") return null;
+  if (!["laranja", "vermelho", "travado"].includes(c.cor) && c.baixouPelaLeitura !== true) return null;
+  const n = Number.isInteger(c.restantes) && c.restantes > 0 ? c.restantes : 0;
+  const dia = /^\d{2}\/\d{2}/.exec(String(c.renovaEm ?? ""))?.[0];
+  if (c.cor === "travado" || n === 0) {
+    const quando = dia ? `a partir de ${dia}` : "quando o mês renovar";
+    return { titulo: "As publicações do mês acabaram: as mudanças ficam salvas.",
+      linha: papel === "funcionaria" ? `A Bruna volta a publicar ${quando}.` : `Dá para publicar de novo ${quando}.`, tom: "vermelho" };
+  }
+  const ate = dia ? ` até ${dia}` : " este mês";
+  const linha = `${n === 1 ? "Resta 1 publicação" : `Restam ${n} publicações`}${ate}.`;
+  const titulo = papel === "funcionaria" ? "Créditos baixos: a Bruna vai juntar as mudanças antes de publicar."
+    : "Créditos baixos: junte as mudanças e publique tudo de uma vez.";
+  return { titulo, linha, tom: c.cor === "vermelho" ? "vermelho" : "laranja" };
+}
+
+// "Entendi" vale para esta entrada (cada entrada vence numa hora diferente) e para esta situação (cor, cota e leitura):
+// numa entrada nova, ou se a situação piorar (laranja → vermelho, cota que cai), a faixa volta. Sem o e-mail: a marca
+// fica na aba e não precisa dizer quem entrou (revisão de 26/10; o Sair também apaga a marca).
+const marcaDaFaixa = (c, pessoa) => [pessoa?.expira, c?.cor, c?.cota, c?.baixouPelaLeitura === true].join("|");
+
 // </ajudantes-puros>
 
 // ---------- ajudantes ----------
@@ -631,6 +659,7 @@ async function casca(...conteudo) {
   if (!eu) return; // a entrada venceu no meio: a tela de entrar já está na frente
   const medidor = h("div", { class: "medidor" });
   const sino = h("button", { class: "sino", type: "button", "aria-label": "Avisos", onclick: () => ir("avisos") }, "Avisos");
+  const creditos = h("div"); // faixa de créditos baixos (fora do topo fixo: no celular não cobre o ☰ nem o Publicar)
   const faixa = h("div");
   const abrirMenu = h("button", { class: "abrir-menu", type: "button", "aria-label": "Abrir o menu", "aria-controls": "menu-painel", "aria-expanded": "false", onclick: () => {
     estrutura?.menu.classList.remove("recolhido");
@@ -645,7 +674,7 @@ async function casca(...conteudo) {
     medidor);
   const { meio } = garantirEstrutura();
   estrutura.abrirMenu = abrirMenu;
-  meio.replaceChildren(h("div", { class: "casca" }, topo, faixa, h("main", { class: "conteudo" }, ...conteudo)));
+  meio.replaceChildren(h("div", { class: "casca" }, topo, creditos, faixa, h("main", { class: "conteudo" }, ...conteudo)));
   window.scrollTo(0, 0);
   meio.scrollTo?.(0, 0);
   menuDoCelular(false);
@@ -653,7 +682,7 @@ async function casca(...conteudo) {
   focarPrevia();
 
   const [cota, avisos, rascunho] = await Promise.all([pedir("cota"), pedir("avisos"), pedir("rascunho")]);
-  if (cota.status === 200) preencherMedidor(medidor, cota.dados);
+  if (cota.status === 200) { preencherMedidor(medidor, cota.dados); mostrarFaixaDeCreditos(creditos, cota.dados); }
   if (avisos.status === 200 && avisos.dados.naoLidos) sino.append(h("span", { class: "bolinha", text: avisos.dados.naoLidos }));
   if (rascunho.status === 200 && rascunho.dados.total) {
     const n = rascunho.dados.total;
@@ -676,6 +705,33 @@ function preencherMedidor(el, c) {
       h("span", { class: "medidor-num", text: `${c.usadas} de ${c.cota}` })),
     h("div", { class: "medidor-barra" }, barra),
     h("div", { class: "medidor-aviso", text: c.mensagem || `Renova em ${c.renovaEm}` }));
+}
+
+// Faixa de créditos baixos (pedido de 26/10). "Entendi" esconde até a próxima entrada: guardado na aba
+// (sessionStorage, que pode estar bloqueado) e também aqui, para valer nas outras telas mesmo sem ele.
+const FAIXA_ENTENDIDA = "painel-creditos-entendi";
+let faixaEntendida = null;
+function mostrarFaixaDeCreditos(lugar, c) {
+  const f = faixaDeCreditos(c, eu?.papel);
+  if (!f || !eu) return;
+  const marca = marcaDaFaixa(c, eu);
+  let entendida = faixaEntendida === marca;
+  try { entendida ||= sessionStorage.getItem(FAIXA_ENTENDIDA) === marca; } catch { /* sem armazenamento: vale a da memória */ }
+  if (entendida) return;
+  const caixa = h("div", { class: `faixa-creditos ${f.tom}`, role: "status" },
+    h("span", { class: "faixa-creditos-icone", "aria-hidden": "true", text: "⚠️" }),
+    h("div", { class: "faixa-creditos-texto" }, h("strong", { text: f.titulo }), h("span", { class: "faixa-creditos-linha", text: f.linha })),
+    h("button", { class: "botao", type: "button", onclick: () => {
+      faixaEntendida = marca;
+      try { sessionStorage.setItem(FAIXA_ENTENDIDA, marca); } catch { /* bloqueado: some só nesta visita */ }
+      // O botão some junto com a faixa: o foco vai para o conteúdo da tela, e não para o começo da página (quem usa
+      // teclado ou leitor de tela continua dali; revisão de 26/10).
+      const conteudo = lugar.parentNode?.querySelector(".conteudo");
+      caixa.remove();
+      conteudo?.setAttribute("tabindex", "-1");
+      conteudo?.focus({ preventScroll: true });
+    } }, "Entendi"));
+  lugar.replaceChildren(caixa);
 }
 
 const voltar = () => h("button", { class: "voltar", type: "button", onclick: () => ir("") }, "‹ Voltar");
@@ -840,6 +896,9 @@ async function sair(e) {
   try {
     for (const k of Object.keys(localStorage)) if (k.startsWith("painel-guardado:")) localStorage.removeItem(k);
   } catch { /* sem acesso ao armazenamento do aparelho */ }
+  // O "Entendi" da faixa de créditos baixos também sai: a próxima pessoa na mesma aba vê a faixa (revisão de 26/10).
+  faixaEntendida = null;
+  try { sessionStorage.removeItem(FAIXA_ENTENDIDA); } catch { /* sem acesso ao armazenamento da aba */ }
   eu = null;
   conteudoCache = null;
   regrasCache = null;
