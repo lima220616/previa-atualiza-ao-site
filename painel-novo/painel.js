@@ -689,7 +689,7 @@ function garantirEstrutura() {
     !ehResponsavel() && itemLateral("✅", "Aprovações", "aprovacoes"), // sem funcionárias desde 27/10
     itemLateral("🕘", "Histórico", "historico"),
     itemLateral("🔔", "Avisos", "avisos"),
-    ehResponsavel() && itemLateral("👥", "Acessos", "acessos"),
+    eu.papel === "admin" && itemLateral("👥", "Acessos", "acessos"), // sem funcionárias, só a administradora cuida de acessos
     eu.papel === "admin" && itemLateral("📊", "Medidor", "medidor"),
     eu.papel !== "admin" && itemLateral("🔑", "Minha senha", "senha"),
     h("div", { class: "lateral-fim" }, itemLateral("🚪", "Sair", null, sair)));
@@ -1045,7 +1045,7 @@ async function telaInicio() {
         : itemMenu("📨", "Enviar para aprovação", "A Bruna ou o CEO aprovam e publicam", "enviar"),
       !responsavel && itemMenu("✅", "Aprovações", "O que você enviou", "aprovacoes"), // sem funcionárias desde 27/10
       itemMenu("🕘", "Histórico", "O que foi publicado, por quem e quando", "historico"),
-      responsavel && itemMenu("👥", "Acessos", "Convidar, desligar e criar nova senha", "acessos"),
+      eu.papel === "admin" && itemMenu("👥", "Acessos", "Convidar a Bruna ou o CEO, desligar e criar nova senha", "acessos"),
       eu.papel === "admin" && itemMenu("📊", "Medidor de publicações", "Cota do mês e gasto real da Netlify", "medidor"),
       eu.papel !== "admin" && itemMenu("🔑", "Minha senha", "Trocar a sua senha", "senha"),
       h("button", { class: "menu-item", type: "button", onclick: sair },
