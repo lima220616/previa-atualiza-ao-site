@@ -125,7 +125,8 @@
     return fontes.filter((f) => f.split(".")[0] === arquivo).length > 1 ? `${arquivo}:${fontes.indexOf(fonte) + 1}-${chave}` : `${arquivo}:${chave}`;
   };
   function conteudo() {
-    const grupos = ESQUEMA.grupos.map((g) => {
+    // Como o servidor (lib/regras.mjs, semSecoes): Seções da página inicial fora do painel desde 27/10.
+    const grupos = ESQUEMA.grupos.filter((g) => !g.campos.every((c) => c.startsWith("secoes."))).map((g) => {
       const casos = g.campos.flatMap((modelo, pos) => {
         const r = ESQUEMA.campos[modelo];
         const p = modelo.split("."); const i = p.indexOf("*");
