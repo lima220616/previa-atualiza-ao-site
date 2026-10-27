@@ -338,6 +338,9 @@ button:focus-visible, a:focus-visible, .escolha:focus-within { outline: 3px soli
   .pergunta-botoes .botao { width: 100%; }
 }
 
+/* Botões de filtro no alto de uma lista (27/10: "Produtos | Kits", "Fotos de resultados | Fotos de produtos") */
+.filtros { margin: 0 0 14px; flex-wrap: wrap; }
+
 .faixa-demo { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; padding: 6px 12px;
   background: #FFF4C2; color: #4A3B00; font-size: .8rem; text-align: center; }
 .faixa-demo button { background: none; border: 0; text-decoration: underline; cursor: pointer; font-size: .8rem; color: inherit; }

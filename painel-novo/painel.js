@@ -1876,6 +1876,9 @@ async function telaCampanha(grupo, sub, aviso = "", procurar) {
       h("p", { class: "ajuda", text: "Só anuncie desconto que já existe na Yampi, com a mesma data de término. Salvar não publica." })));
 }
 
+// Botão escolhido em cada grupo com filtros ("Produtos | Kits"...): continua o mesmo ao voltar para a lista.
+const filtroEscolhido = new Map();
+
 async function telaListaItens(grupo) {
   const itens = [];
   for (const c of grupo.campos) {
@@ -1883,20 +1886,31 @@ async function telaListaItens(grupo) {
     if (!it) itens.push(it = { chave: c.item, nome: c.itemNome, campos: [] });
     it.campos.push(c);
   }
-  const linhas = itens.map((it) => {
+  // Filtros (27/10): botões no alto separam os itens pelo arquivo de onde vêm (o 1º pedaço do caminho do campo).
+  const filtros = Array.isArray(grupo.filtros) && grupo.filtros.length > 1 ? grupo.filtros : null;
+  const escolhido = filtros ? Math.min(filtroEscolhido.get(grupo.id) ?? 0, filtros.length - 1) : 0;
+  const doFiltro = (it) => !filtros || filtros[escolhido].arquivos.includes(String(it.campos[0]?.caminho ?? "").split(".")[0]);
+  const botoesDoFiltro = filtros && h("div", { class: "botoes filtros", role: "group", "aria-label": `Mostrar em ${grupo.titulo}` },
+    filtros.map((f, n) => h("button", { class: n === escolhido ? "botao verde" : "botao claro", type: "button", "aria-pressed": String(n === escolhido),
+      onclick: () => { filtroEscolhido.set(grupo.id, n); telaListaItens(grupo); } },
+    `${f.rotulo} (${itens.filter((it) => f.arquivos.includes(String(it.campos[0]?.caminho ?? "").split(".")[0])).length})`)));
+  const linhas = itens.filter(doFiltro).map((it) => {
     const valor = (c) => (c.rascunho ? c.rascunho.valor : c.noSite);
     const liga = it.campos.find((c) => c.tipo === "ligado");
     const videos = it.campos.find((c) => c.tipo === "videos");
+    const fotos = it.campos.find((c) => c.tipo === "fotos");
     const nVideos = soObjetos(videos && valor(videos)).length;
+    const nFotos = soObjetos(fotos && valor(fotos)).length;
     const situacao = liga ? etiqueta(`${liga.rotulo}: ${valor(liga) === false ? "Não" : "Sim"}`, valor(liga) === false ? "cinza" : "verde")
-      : videos ? etiqueta(`${nVideos} ${nVideos === 1 ? "vídeo" : "vídeos"}`, nVideos ? "verde" : "cinza") : "";
+      : videos ? etiqueta(`${nVideos} ${nVideos === 1 ? "vídeo" : "vídeos"}`, nVideos ? "verde" : "cinza")
+        : fotos ? etiqueta(`${nFotos} ${nFotos === 1 ? "foto" : "fotos"}`, nFotos ? "verde" : "cinza") : "";
     const salvos = it.campos.filter((c) => c.rascunho).length;
     return h("tr", {},
       h("td", {}, h("strong", { text: it.nome }), salvos > 0 && h("div", { class: "miudo", text: `${salvos} mudança(s) salva(s), ainda não publicada(s)` })),
       h("td", {}, situacao),
       h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", "aria-label": `Editar ${it.nome}`, onclick: () => ir(`conteudo/${grupo.id}/${it.chave}`) }, "✏️ Editar")));
   });
-  await casca(cabecalhoLista(grupo.titulo), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }),
+  await casca(cabecalhoLista(grupo.titulo), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }), botoesDoFiltro,
     h("div", { class: "cartao" }, tabela(["Nome", "Situação", "Ações"], linhas)));
 }
 

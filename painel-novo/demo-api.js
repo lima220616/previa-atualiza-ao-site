@@ -147,7 +147,7 @@
           nome: item ? `${r.nome} · ${item}` : r.nome, noSite: ler(E.site[arq(caminho)], lugar(caminho)),
           ...(rasc && { rascunho: { valor: rasc.valor, por: rasc.por, em: rasc.em } }), _o: [fonte ? fontes.indexOf(fonte) : -1, ordem, pos] };
       }).sort((a, b) => a._o[0] - b._o[0] || a._o[1] - b._o[1] || a._o[2] - b._o[2]).map(({ _o, ...c }) => c);
-      return { id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "", campos };
+      return { id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "", ...(g.filtros && { filtros: g.filtros }), campos };
     });
     return { grupos, publicarLigado: true };
   }
