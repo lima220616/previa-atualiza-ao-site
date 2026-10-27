@@ -46,7 +46,22 @@ img { max-width: 100%; display: block; }
 /* aviso de rascunho */
 .rascunho { margin: 10px 16px 0; padding: 10px 12px; border-radius: var(--raio-b); background: var(--vinho); color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: .88rem; box-shadow: var(--sombra); }
+.rascunho { flex-wrap: wrap; }
+.rascunho .botoes { margin-top: 0; }
 .rascunho .botao { padding: 8px 14px; font-size: .85rem; }
+/* Na faixa vinho, a moldura rosa do teclado quase não aparecia: branca (revisão de 26/10). */
+.rascunho :focus-visible { outline-color: #fff; }
+/* "Ver a lista" (teste de 26/10): abre embaixo da faixa; cada linha leva à tela daquela parte. Mesma largura com
+   "Fechar a lista", para o Publicar não pular de linha no celular. */
+.rascunho .ver-lista { min-width: 9.2em; }
+.rascunho-detalhe:empty { display: none; }
+.rascunho-detalhe { margin: 6px 16px 0; padding: 4px 12px 8px; border-radius: var(--raio-b); background: var(--branco);
+  border: 1px solid var(--linha); box-shadow: var(--sombra); font-size: .88rem; }
+.rascunho-detalhe .lista > li { padding: 0; }
+.rascunho-item { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 10px 0; background: none; border: 0;
+  color: var(--texto); font: inherit; text-align: left; cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
+.rascunho-item strong { color: var(--vinho); }
+.rascunho-item:hover strong, .rascunho-item:focus-visible strong { text-decoration: underline; }
 
 /* faixa de créditos baixos (26/10): no fluxo da página, logo abaixo do topo fixo, para não cobrir o ☰ nem o Publicar */
 .faixa-creditos { margin: 10px 16px 0; padding: 10px 12px; border-radius: var(--raio-b); background: #FFF4E5; color: var(--texto);
@@ -277,6 +292,7 @@ button:focus-visible, a:focus-visible, .escolha:focus-within { outline: 3px soli
   .botao, .sino, .lateral-item, .menu-item { min-height: 44px; }
   .abrir-menu { width: 44px; height: 44px; }
   .rascunho .botao { padding: 10px 14px; }
+  .rascunho-item { min-height: 44px; }
 }
 @media (max-width: 479px) {
   .antes-depois { grid-template-columns: 1fr; }
@@ -294,6 +310,32 @@ button:focus-visible, a:focus-visible, .escolha:focus-within { outline: 3px soli
   .tabela td:first-child::before, .tabela td.acoes::before { content: none; }
   .tabela .acoes { display: flex; flex-wrap: wrap; gap: 8px; text-align: left; white-space: normal; padding-top: 8px; }
   .tabela .acao { margin: 0; }
+}
+
+/* Pergunta na própria tela, no lugar do confirm()/alert() do navegador (teste de 26/10): o navegador de dentro de
+   aplicativos (WhatsApp, Instagram) bloqueia essas janelinhas. Por cima de tudo, até do menu do celular (z-index 50).
+   Texto longo rola dentro da caixa; os botões ficam sempre à vista. Tocar no fundo não responde nada. */
+.pergunta-fundo { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(74, 30, 43, .55); }
+.pergunta { display: flex; flex-direction: column; width: 100%; max-width: 440px; min-width: 0;
+  max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow: hidden;
+  background: var(--branco); border-radius: var(--raio); border-top: 6px solid var(--vinho); box-shadow: var(--sombra), 0 12px 40px rgba(0, 0, 0, .25); }
+.pergunta.verde { border-top-color: var(--verde); }
+.pergunta.perigo { border-top-color: var(--vermelho); }
+.pergunta-corpo { padding: 18px 18px 6px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.pergunta-titulo { font-size: 1.1rem; }
+/* As quebras de linha do texto (lista do que mudou, a frase entre aspas) aparecem como estão. */
+.pergunta-texto { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.pergunta-botoes { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 12px 18px 18px;
+  border-top: 1px solid var(--linha); }
+.pergunta-botoes .botao { min-height: 44px; }
+/* Na pergunta, o "sim" de apagar/excluir/desligar é vermelho cheio (fora dela, .botao.perigo é branco com borda). */
+.pergunta .botao.perigo { background: var(--vermelho); color: var(--branco); border: 0; }
+.pergunta .botao.perigo:hover { background: #B92F2F; }
+/* Celular estreito: botões um embaixo do outro, na largura toda (o "sim" em cima). */
+@media (max-width: 479px) {
+  .pergunta-botoes { flex-direction: column; }
+  .pergunta-botoes .botao { width: 100%; }
 }
 
 .faixa-demo { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; padding: 6px 12px;

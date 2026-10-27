@@ -256,11 +256,11 @@
       // Como o servidor: quem não é a administradora vê o e-mail das outras pessoas mascarado, e a tela age pelo "id".
       case "acessos": return ok(metodo === "GET" ? { pessoas: [
         { nome: "Bruna", email: "bruna@exemplo.com", id: "1".repeat(64), papel: "responsavel", ativo: true, podeMexer: false },
-        { nome: "CEO da marca", email: "c***@exemplo.com", id: "2".repeat(64), papel: "responsavel", ativo: true, podeMexer: false },
-        { nome: "Ana (exemplo)", email: "a***@exemplo.com", id: "3".repeat(64), papel: "funcionaria", ativo: true, podeMexer: true }], registro: [] }
+        { nome: "CEO da marca", email: "c***@exemplo.com", id: "2".repeat(64), papel: "responsavel", ativo: true, podeMexer: false }], registro: [] }
         : { ok: true, ativo: dados.acao === "religar" });
+      // Desde 27/10 o painel é só da Bruna e do CEO: não há convite de funcionária.
       case "convites": return ok(metodo === "GET" ? { convites: [] }
-        : { id: "demo", link: `${location.origin}${location.pathname}#convite/exemplo-de-convite`, papel: dados.papel || "funcionaria", expira: agora() + 1728e5 }, metodo === "POST" ? 201 : 200);
+        : { id: "demo", link: `${location.origin}${location.pathname}#convite/exemplo-de-convite`, papel: "responsavel", expira: agora() + 1728e5 }, metodo === "POST" ? 201 : 200);
       case "convite": return falha("Esta é só uma demonstração: o convite de verdade funciona no painel no ar.", 410);
       case "foto": case "video": return falha("Na demonstração não dá para enviar fotos e vídeos. No painel de verdade, funciona.");
       default: return falha("Na demonstração, isso não está disponível.", 404);

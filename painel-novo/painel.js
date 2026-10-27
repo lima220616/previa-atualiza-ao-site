@@ -283,7 +283,8 @@ async function pedir(rota, { metodo = "GET", corpo } = {}) {
 const quando = (ms) => new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(ms);
 const ehResponsavel = () => eu && (eu.papel === "responsavel" || eu.papel === "admin");
 
-function trocar(...filhos) { estrutura = null; app.replaceChildren(...filhos); window.scrollTo(0, 0); }
+// Tela de entrar ou de convite no lugar do painel: uma pergunta que estava aberta era da tela que saiu (fecha com "não").
+function trocar(...filhos) { perguntaAberta?.responder(false); estrutura = null; app.replaceChildren(...filhos); window.scrollTo(0, 0); }
 // Sem texto numa mensagem de erro, diz pelo menos que algo deu errado (item 28). "" limpa a mensagem.
 function mensagem(el, texto, tipo = "erro") {
   el.className = tipo;
@@ -301,6 +302,77 @@ function campo(rotulo, props, ajuda) {
 }
 const etiqueta = (texto, cor = "") => h("span", { class: `etiqueta ${cor}`, text: texto });
 const botaoInicio = () => h("button", { class: "botao", type: "button", onclick: () => ir("") }, "Voltar ao início");
+
+// ---------- pergunta na própria tela, no lugar do confirm() e do alert() do navegador (teste de 26/10) ----------
+// O navegador de dentro de aplicativos (WhatsApp, Instagram) e o do app do Claude bloqueiam essas janelinhas: o
+// confirm() devolvia "não" na hora, sem mostrar nada, e "Publicar no site" não fazia nada. Agora a pergunta é uma
+// caixa do próprio painel, direto no <body>: fora da área que as telas desenham de novo (não some no meio) e por cima
+// de tudo, até do menu do celular. Devolve uma promessa: true = o botão "sim"; false = "Cancelar", Esc ou outra
+// pergunta que abriu no lugar. nao: null = só um botão (aviso, no lugar do alert). tom: "verde" (publicar) ou
+// "perigo" (apagar, excluir, desligar). Tocar no fundo escuro não responde nada (evita toque sem querer).
+let perguntaAberta = null; // { botoes, responder }
+function perguntar(texto, { sim = "Sim", nao = "Cancelar", tom = "", titulo } = {}) {
+  perguntaAberta?.responder(false); // uma pergunta de cada vez: a que estava aberta responde "não" e some
+  const antes = document.activeElement; // ao fechar, o foco volta para cá
+  return new Promise((resolver) => {
+    const idTitulo = novoId();
+    const idTexto = novoId();
+    const bSim = h("button", { class: `botao ${tom}`.trim(), type: "button", "data-resposta": "sim" }, sim);
+    const bNao = nao === null ? null : h("button", { class: "botao claro", type: "button", "data-resposta": "nao" }, nao);
+    const fundo = h("div", { class: "pergunta-fundo" },
+      h("div", { class: `pergunta ${tom}`.trim(), role: "alertdialog", "aria-modal": "true", "aria-labelledby": idTitulo, "aria-describedby": idTexto },
+        h("div", { class: "pergunta-corpo" },
+          h("h2", { class: "pergunta-titulo", id: idTitulo, text: titulo || (nao === null ? "Aviso" : tom === "perigo" ? "Atenção" : "Confirme") }),
+          h("p", { class: "pergunta-texto", id: idTexto, text: texto })),
+        h("div", { class: "pergunta-botoes" }, bSim, bNao)));
+    // Clicar no fundo não tira o foco dos botões (quem usa teclado continua na pergunta).
+    fundo.addEventListener("mousedown", (e) => { if (e.target === fundo) e.preventDefault(); });
+    const esta = {
+      botoes: [bSim, bNao].filter(Boolean),
+      responder(resposta) {
+        if (perguntaAberta !== esta) return;
+        perguntaAberta = null;
+        fundo.remove();
+        app.inert = false;
+        if (antes && antes !== document.body && antes.isConnected) antes.focus?.({ preventScroll: true });
+        resolver(resposta);
+      },
+    };
+    bSim.addEventListener("click", () => esta.responder(true));
+    bNao?.addEventListener("click", () => esta.responder(false));
+    perguntaAberta = esta;
+    app.inert = true; // a tela de trás fica fora do toque, do Tab e da leitura de tela enquanto a pergunta está aberta
+    document.body.append(fundo);
+    // Apagar, excluir, desligar: o foco começa em "Cancelar" (um Enter sem querer não apaga nada).
+    (tom === "perigo" && bNao ? bNao : bSim).focus();
+  });
+}
+// Com a pergunta aberta: Esc = Cancelar e o Tab fica preso nos botões dela. Na fase de captura, antes do Esc que
+// fecha o menu do celular (o Esc só fecha a pergunta).
+document.addEventListener("keydown", (e) => {
+  if (!perguntaAberta) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); perguntaAberta.responder(false); return; }
+  if (e.key !== "Tab") return;
+  e.preventDefault();
+  const { botoes } = perguntaAberta;
+  const i = botoes.indexOf(document.activeElement);
+  const passo = e.shiftKey ? -1 : 1;
+  botoes[i < 0 ? (passo > 0 ? 0 : botoes.length - 1) : (i + passo + botoes.length) % botoes.length].focus();
+}, true);
+
+// Pergunta antes de agir num botão da tela. Dois toques seguidos no botão não abrem duas perguntas. O "sim" só vale
+// se o botão ainda estiver na tela: se ela foi trocada ou desenhada de novo enquanto a pergunta estava aberta (ex.:
+// voltar do navegador), não age sobre o que já saiu.
+const perguntandoEm = new WeakSet();
+async function confirmarNaTela(botao, texto, opcoes) {
+  if (perguntandoEm.has(botao)) return false;
+  perguntandoEm.add(botao);
+  try {
+    return (await perguntar(texto, opcoes)) && botao.isConnected;
+  } finally {
+    perguntandoEm.delete(botao);
+  }
+}
 
 // ---------- como cada valor aparece na tela (Aprovações, conflitos, Histórico, Publicar, Enviar; itens 4 e 60) ----------
 const enderecoDeImagem = (v) => (String(v).startsWith("foto:") ? `${API}foto?id=${encodeURIComponent(String(v).slice(5))}` : String(v));
@@ -472,7 +544,9 @@ function oferecerRecuperacao(chave, { atual, base, aoUsar, mostrar, mesmo = (a, 
 // ---------- foto ou vídeo subindo: avisa antes de sair da tela (item 56) ----------
 let enviosEmAndamento = 0;
 const PERGUNTA_ENVIO = "Um vídeo ou uma foto ainda está subindo. Espere terminar e toque em Salvar. Sair desta tela mesmo assim? (Se terminar de subir, ele fica guardado neste aparelho.)";
-const podeSairDaTela = () => !enviosEmAndamento || confirm(PERGUNTA_ENVIO);
+// Sem envio no meio, pode sair; com envio, pergunta na tela e só sai com "Sair mesmo assim" (devolve uma promessa).
+const podeSairDaTela = async () => !enviosEmAndamento
+  || perguntar(PERGUNTA_ENVIO, { sim: "Sair mesmo assim", nao: "Ficar e esperar", titulo: "Ainda está subindo" });
 window.addEventListener("beforeunload", (e) => { if (enviosEmAndamento) { e.preventDefault(); e.returnValue = ""; } });
 
 // O envio terminou, mas a tela dele não está mais na frente (a pessoa saiu ou a tela foi desenhada de novo): o
@@ -612,7 +686,7 @@ function garantirEstrutura() {
     h("p", { class: "lateral-secao", text: "Conteúdo do site" }), gruposMenu,
     h("p", { class: "lateral-secao", text: "Site" }),
     ehResponsavel() ? itemLateral("🚀", "Publicar", "publicar") : itemLateral("📨", "Enviar para aprovação", "enviar"),
-    itemLateral("✅", "Aprovações", "aprovacoes"),
+    !ehResponsavel() && itemLateral("✅", "Aprovações", "aprovacoes"), // sem funcionárias desde 27/10
     itemLateral("🕘", "Histórico", "historico"),
     itemLateral("🔔", "Avisos", "avisos"),
     ehResponsavel() && itemLateral("👥", "Acessos", "acessos"),
@@ -690,13 +764,93 @@ async function casca(...conteudo) {
   if (rascunho.status === 200 && rascunho.dados.total) {
     const n = rascunho.dados.total;
     const acao = ehResponsavel() ? ["Publicar", () => ir("publicar")] : ["Enviar para aprovação", () => ir("enviar")];
+    // "Ver a lista" (teste de 26/10): a pessoa não lembra tudo o que mexeu; abre ali mesmo, embaixo da faixa, o que
+    // foi mexido, parte por parte, e cada linha leva à tela daquela parte. O antes e depois fica no Publicar.
+    const lista = h("div", { class: "rascunho-detalhe", id: novoId(), role: "region", "aria-label": "Mudanças ainda não publicadas" });
+    const verLista = h("button", { class: "botao claro ver-lista", type: "button", "aria-expanded": "false", "aria-controls": lista.id }, "Ver a lista");
+    verLista.addEventListener("click", () => {
+      const abrir = verLista.getAttribute("aria-expanded") !== "true";
+      verLista.setAttribute("aria-expanded", String(abrir));
+      verLista.textContent = abrir ? "Fechar a lista" : "Ver a lista";
+      if (abrir) mostrarListaDoRascunho(lista, acao[0], () => verLista.getAttribute("aria-expanded") === "true");
+      else lista.replaceChildren();
+    });
     faixa.append(h("div", { class: "rascunho" },
       h("span", { text: `${n} ${n === 1 ? "mudança ainda não publicada" : "mudanças ainda não publicadas"}` }),
       h("div", { class: "botoes" },
-        // No celular, a prévia abre na parte do site do grupo aberto (pedido de 26/10).
+        verLista,
+        // No celular, a prévia abre na parte do site do grupo aberto (pedido de 26/10). No computador, a prévia já
+        // fica à direita.
         !estrutura?.iframe && h("a", { class: "botao claro", href: focoDaTela() ? `previa/?foco=${encodeURIComponent(focoDaTela())}` : "previa/" }, "Ver como fica"),
-        h("button", { class: "botao verde", type: "button", onclick: acao[1] }, acao[0]))));
+        h("button", { class: "botao verde", type: "button", onclick: acao[1] }, acao[0]))), lista);
   }
+}
+
+// O que mudou num campo, em poucas palavras, para a lista da faixa: "Selo: Mais vendido", "Para quem é (1 entrou)",
+// "Campanha teste (nova)". Texto comprido não aparece (o antes e depois fica no Publicar). comItem: a linha é do grupo
+// todo (ex.: Link na bio, com a frase e os botões juntos), então o campo de um item leva o nome dele ("Nome do botão ·
+// Loja"), como na tela do grupo.
+function resumoDoCampo(c, comItem) {
+  const valor = c.rascunho.valor;
+  const rotulo = comItem && c.item ? c.nome : c.rotulo;
+  const comResumo = (resumo) => (resumo ? `${rotulo} (${resumo})` : rotulo);
+  if (c.tipo === "campanhas") {
+    const dif = diferencaDeCampanhas(c.noSite, valor);
+    const nome = (x) => `"${String(x?.titulo ?? "").trim() || "sem título"}"`;
+    const partes = [...dif.pares.filter((p) => p.nova).map((p) => `${nome(p.depois)} (nova)`),
+      ...dif.pares.filter((p) => !p.nova && p.mudaram.length).map((p) => `${nome(p.depois)} (mudou)`),
+      ...dif.sairam.map((x) => `${nome(x)} (excluída)`)];
+    if (partes.length) return partes.join(", ");
+    // Sem campanha nova, mudada ou excluída: ou a ordem mudou, ou ficou igual ao site (Salvar sem mexer).
+    const titulos = (v) => JSON.stringify(soObjetos(v).map((x) => String(x.titulo ?? "")));
+    return `${rotulo} (${titulos(c.noSite) === titulos(valor) ? "igual ao site" : "ordem mudou"})`;
+  }
+  if (c.tipo === "videos") return comResumo(resumoDeVideos(diferencaDeVideos(c.noSite, valor)));
+  if (c.tipo === "lista-de-textos") return comResumo(resumoDeTextos(diferencaDeTextos(c.noSite, valor)));
+  if (["ligado", "escolha", "data"].includes(c.tipo)) return `${rotulo}: ${textoSimples(valor, c)}`;
+  if (c.tipo === "foto") return `${rotulo} nova`;
+  return rotulo;
+}
+
+// A lista da faixa: uma linha por parte (ou por produto, kit, vídeo...), com o que foi mexido; tocar leva à tela.
+// Lê de novo o rascunho e o conteúdo: o rascunho é dividido (Bruna, CEO, administradora), e alguém pode ter publicado
+// ou descartado depois que a faixa apareceu (revisão de 26/10).
+// aberta(): a lista continua aberta (se a pessoa fechou enquanto carregava, não abre sozinha).
+async function mostrarListaDoRascunho(el, verbo, aberta) {
+  el.replaceChildren(h("p", { class: "miudo", text: "Carregando a lista…" }));
+  const [r, rasc] = await Promise.all([pedirConteudo(), pedir("rascunho")]);
+  if (!aberta()) return;
+  const falhou = [r, rasc].find((x) => x.status !== 200);
+  if (falhou) return el.replaceChildren(h("p", { class: "erro", text: falhou.dados?.erro || "Não foi possível carregar a lista agora." }));
+  const mudancas = rasc.dados.mudancas || {};
+  if (!Object.keys(mudancas).length) {
+    return el.replaceChildren(h("p", { class: "miudo", text: "Nada salvo para publicar agora (alguém já publicou ou descartou)." }));
+  }
+  const linhas = [];
+  const achados = new Set();
+  for (const g of r.dados.grupos) {
+    const mexidos = g.campos.filter((c) => c.rascunho);
+    if (!mexidos.length) continue;
+    const campanhas = g.campos.length === 1 && g.campos[0].tipo === "campanhas";
+    const porItem = !campanhas && g.campos.every((c) => c.item);
+    const partes = porItem ? [...new Set(mexidos.map((c) => c.item))].map((item) => mexidos.filter((c) => c.item === item)) : [mexidos];
+    for (const campos of partes) {
+      campos.forEach((c) => achados.add(c.caminho));
+      const rota = porItem ? `conteudo/${g.id}/${campos[0].item}` : `conteudo/${g.id}`;
+      const titulo = `${g.titulo}${porItem && campos[0].itemNome ? ` · ${campos[0].itemNome}` : ""}`;
+      // O ícone não é lido em voz alta (como no menu lateral).
+      linhas.push(h("li", {}, h("button", { class: "rascunho-item", type: "button", onclick: () => ir(rota) },
+        h("strong", {}, h("span", { "aria-hidden": "true", text: `${g.icone || "✏️"} ` }), titulo),
+        h("span", { text: campos.map((c) => resumoDoCampo(c, !porItem)).join(", ") }))));
+    }
+  }
+  // Mudança salva num campo que as telas de hoje não mostram (as regras do site mudaram): conta, sem link.
+  const fora = Object.keys(mudancas).filter((c) => !achados.has(c)).length;
+  // replaceChildren do navegador escreve null e false como texto: só elementos (revisão de 26/10).
+  el.replaceChildren(...[
+    linhas.length > 0 && h("ul", { class: "lista" }, linhas),
+    fora > 0 && h("p", { class: "miudo", text: `${fora === 1 ? "Mais 1 mudança" : `Mais ${fora} mudanças`} fora das telas de hoje.` }),
+    h("p", { class: "miudo", text: `O antes e depois de cada uma aparece em ${verbo}, antes de confirmar.` })].filter(Boolean));
 }
 
 function preencherMedidor(el, c) {
@@ -746,11 +900,11 @@ function telaFalhou(titulo, r) {
     h("button", { class: "botao", type: "button", onclick: () => rotear() }, "Tentar de novo")));
 }
 
-// Aviso no alto da tela que está na frente (ou numa janela, se não houver tela do painel). No celular, fecha o menu
-// (ex.: "Sair" tocado no menu): senão o aviso ficava escondido atrás dele.
+// Aviso no alto da tela que está na frente (ou numa caixa com "Entendi", se não houver tela do painel). No celular,
+// fecha o menu (ex.: "Sair" tocado no menu): senão o aviso ficava escondido atrás dele.
 function avisoNaTela(texto) {
   const lugar = estrutura?.meio?.querySelector(".conteudo");
-  if (!lugar) return alert(texto);
+  if (!lugar) return perguntar(texto, { sim: "Entendi", nao: null });
   if (estrutura.menu.classList.contains("aberto")) menuDoCelular(false, { focar: true });
   lugar.querySelector(".aviso-geral")?.remove();
   lugar.prepend(h("p", { class: "erro aviso-geral", role: "alert", text: texto }));
@@ -759,22 +913,37 @@ function avisoNaTela(texto) {
 
 // ---------- navegação ----------
 // Muda de tela pelo endereço (#acessos, #historico...). Se já estiver nele, o navegador não avisa: desenha direto.
+// Com foto ou vídeo subindo, pergunta antes (na tela) e só muda com "Sair mesmo assim".
 let hashMostrado = location.hash; // endereço da tela que está na frente (para voltar a ele se a pessoa desistir de sair)
 let saidaConfirmada = false;
 function ir(rota) {
-  if (!podeSairDaTela()) return;
+  if (!enviosEmAndamento) return navegar(rota);
+  podeSairDaTela().then((sim) => { if (sim) navegar(rota); });
+}
+function navegar(rota) {
   const atual = location.hash.replace(/^#/, "");
   if (atual !== rota) { saidaConfirmada = true; location.hash = rota; }
   else rotear();
 }
 window.addEventListener("hashchange", () => {
-  const pode = saidaConfirmada || location.hash === hashMostrado || podeSairDaTela();
+  const pode = saidaConfirmada || location.hash === hashMostrado || !enviosEmAndamento;
   saidaConfirmada = false;
-  if (!pode) { history.replaceState(null, "", hashMostrado || location.pathname + location.search); return; }
-  rotear();
+  if (pode) return rotear();
+  // Voltar do navegador (ou um link) com foto ou vídeo subindo: o endereço volta na hora para o da tela que está na
+  // frente e a pergunta aparece; com "Sair mesmo assim", vai para o endereço pedido.
+  const pedido = location.hash;
+  history.replaceState(null, "", hashMostrado || location.pathname + location.search);
+  podeSairDaTela().then((sim) => {
+    if (!sim) return;
+    if (location.hash === pedido) return rotear();
+    saidaConfirmada = true;
+    location.hash = pedido;
+  });
 });
 
 async function rotear() {
+  // Tela nova: uma pergunta que estava aberta era da tela que está saindo (fecha com "não"; nada dela acontece).
+  perguntaAberta?.responder(false);
   hashMostrado = location.hash;
   const hash = decodeURIComponent(location.hash.slice(1));
   // A cópia do conteúdo só serve para ir de "Conteúdo do site" direto a um grupo (item 24).
@@ -874,7 +1043,7 @@ async function telaInicio() {
       itemMenu("✏️", "Conteúdo do site", "Textos, campanha, seções, produtos e link na bio", "conteudo"),
       responsavel ? itemMenu("🚀", "Publicar", "Levar as mudanças salvas para o site", "publicar")
         : itemMenu("📨", "Enviar para aprovação", "A Bruna ou o CEO aprovam e publicam", "enviar"),
-      itemMenu("✅", "Aprovações", responsavel ? "Mudanças das funcionárias" : "O que você enviou", "aprovacoes"),
+      !responsavel && itemMenu("✅", "Aprovações", "O que você enviou", "aprovacoes"), // sem funcionárias desde 27/10
       itemMenu("🕘", "Histórico", "O que foi publicado, por quem e quando", "historico"),
       responsavel && itemMenu("👥", "Acessos", "Convidar, desligar e criar nova senha", "acessos"),
       eu.papel === "admin" && itemMenu("📊", "Medidor de publicações", "Cota do mês e gasto real da Netlify", "medidor"),
@@ -889,7 +1058,9 @@ async function telaInicio() {
 // Só diz "Você saiu" quando o servidor confirmou: sem isso, a entrada pode continuar valendo neste aparelho (item 36).
 async function sair(e) {
   const botao = e && e.currentTarget && e.currentTarget.nodeType === 1 ? e.currentTarget : null;
-  if (enviosEmAndamento && !confirm("Um vídeo ou uma foto ainda está subindo e vai se perder. Sair mesmo assim?")) return;
+  if (enviosEmAndamento && !(await perguntar("Um vídeo ou uma foto ainda está subindo e vai se perder. Sair mesmo assim?",
+    { sim: "Sair mesmo assim", nao: "Ficar e esperar", tom: "perigo" }))) return;
+  if (!eu) return; // a entrada venceu enquanto a pergunta estava aberta: a tela de entrar já está na frente
   if (botao) botao.disabled = true;
   const r = await pedir("sair", { metodo: "POST", corpo: {} });
   if (botao) botao.disabled = false;
@@ -1227,6 +1398,16 @@ function entradaDeCampanhas(c, valor, aoMudar) {
       fim.addEventListener("change", () => { x.termina = fim.value; desenhar(); mexeu(); });
       const ligada = h("input", { type: "checkbox", checked: x.ligada !== false });
       ligada.addEventListener("change", () => { x.ligada = ligada.checked; desenhar(); mexeu(); });
+      const tirar = h("button", { class: "botao perigo", type: "button" }, "Tirar");
+      tirar.addEventListener("click", async () => {
+        if (!(await confirmarNaTela(tirar, `Tirar a campanha "${x.titulo || "nova"}"?`, { sim: "Sim, tirar", tom: "perigo" }))) return;
+        // Tira esta campanha (a mesma), não a que estiver na posição dela agora.
+        const k = lista.indexOf(x);
+        if (k < 0) return;
+        lista.splice(k, 1);
+        desenhar();
+        mexeu();
+      });
       return h("div", { class: "video-item" },
         h("div", { class: "botoes" }, h("strong", { text: x.titulo || "Campanha nova" }), h("span", { class: `etiqueta ${cor}`, text: rotulo })),
         texto("Título", "titulo", 40), texto("Texto (ex.: até 30% OFF com cupom)", "texto", 60), texto("Texto do botão", "botao", 30),
@@ -1235,7 +1416,7 @@ function entradaDeCampanhas(c, valor, aoMudar) {
         h("label", { class: "escolha" }, ligada, h("span", { text: "Ligada no site" })),
         h("div", { class: "botoes" },
           h("button", { class: "botao claro", type: "button", disabled: i === 0, onclick: () => { [lista[i - 1], lista[i]] = [lista[i], lista[i - 1]]; desenhar(); mexeu(); } }, "↑ Subir"),
-          h("button", { class: "botao perigo", type: "button", onclick: () => { if (confirm(`Tirar a campanha "${x.titulo || "nova"}"?`)) { lista.splice(i, 1); desenhar(); mexeu(); } } }, "Tirar")));
+          tirar));
     }));
     if (!lista.length) caixa.append(h("p", { class: "miudo", text: "Nenhuma campanha. Toque em \"+ Adicionar campanha\"." }));
   };
@@ -1299,8 +1480,14 @@ function entradaDeListaDeTextos(c, valor, aoMudar) {
         mexeu();
       };
       // Frase com texto: pergunta antes de tirar (um toque errado no celular apagaria o que foi escrito).
-      const remover = () => {
-        if (lista[i].trim() && !confirm(`Remover a frase ${i + 1}?\n"${lista[i].trim()}"`)) return;
+      const remover = async () => {
+        const frase = lista[i];
+        if (frase.trim()) {
+          const sim = await confirmarNaTela(tirar, `Remover a frase ${i + 1}?\n"${frase.trim()}"`, { sim: "Sim, remover", tom: "perigo" });
+          // Se a lista foi desenhada de novo enquanto a pergunta estava aberta (as posições mudam), não remove nada:
+          // só a caixa desta frase, ainda na tela e com o mesmo texto.
+          if (!sim || !area.isConnected || lista[i] !== frase) return;
+        }
         lista.splice(i, 1);
         desenhar({ frase: Math.min(i, lista.length - 1), botao: "remover" });
         mexeu();
@@ -1403,7 +1590,8 @@ function entradaDoCampo(c, valor, aoMudar) {
 // abriu. Se mudou, pergunta. Devolve os "vistos" ({ caminho: em que a tela viu, ou null }) para mandar no Salvar,
 // false (recarregar a tela com a versão nova) ou null (parar: a entrada venceu). O servidor confere o "visto" de
 // novo na hora de gravar: se alguém salvou entre a conferência e o Salvar, ele recusa (409) sem gravar nada.
-async function podeSalvarPorCima(itens) {
+// "naTela": um elemento da tela que pediu; se ela saiu enquanto a pergunta estava aberta, devolve null (para tudo).
+async function podeSalvarPorCima(itens, naTela) {
   const vistos = Object.fromEntries(itens.map((x) => [x.caminho, x.em ?? null]));
   const r = await pedir("rascunho");
   if (r.status === 401) return null;
@@ -1414,7 +1602,12 @@ async function podeSalvarPorCima(itens) {
     const m = r.dados.mudancas?.[x.caminho];
     return m ? `• ${x.nome}: salvo por ${m.por} em ${quando(m.em)}` : `• ${x.nome}: publicado ou descartado depois que você abriu a tela`;
   });
-  if (!confirm(`Isto mudou depois que você abriu a tela:\n${linhas.join("\n")}\n\nOK: salvar o seu por cima (o que está lá agora some).\nCancelar: ver a versão nova (o que você mexeu fica guardado neste aparelho).`)) return false;
+  // Cada botão diz o que acontece (antes era "OK:" e "Cancelar:" no texto). O foco começa em "Ver a versão nova".
+  const porCima = await perguntar(`Isto mudou depois que você abriu a tela:\n${linhas.join("\n")}\n\n`
+    + `"Salvar o meu por cima": o que está lá agora some.\n"Ver a versão nova": o que você mexeu fica guardado neste aparelho.`,
+    { sim: "Salvar o meu por cima", nao: "Ver a versão nova", tom: "perigo" });
+  if (naTela && !naTela.isConnected) return null; // a tela foi trocada: o que foi digitado já está guardado no aparelho
+  if (!porCima) return false;
   // Quis salvar por cima: o "visto" passa a ser o que ela acabou de ver (se mudar de novo, o servidor recusa).
   for (const x of mudados) vistos[x.caminho] = r.dados.mudancas?.[x.caminho]?.em ?? null;
   return vistos;
@@ -1441,7 +1634,7 @@ function tabela(colunas, linhas) {
 // true = salvo; { recarregar, aviso } = outra pessoa mudou e a tela mostra a versão nova (com o aviso, se o servidor
 // recusou pelo "visto"); false = não salvou.
 async function salvarCampo(campo, valor, msg) {
-  const vistos = await podeSalvarPorCima([{ caminho: campo.caminho, em: campo.rascunho?.em, nome: campo.nome }]);
+  const vistos = await podeSalvarPorCima([{ caminho: campo.caminho, em: campo.rascunho?.em, nome: campo.nome }], msg);
   if (vistos === null) return false;
   if (!vistos) return { recarregar: true, aviso: "" };
   const res = await pedir("rascunho", { metodo: "POST", corpo: { mudancas: [{ caminho: campo.caminho, valor, antes: campo.noSite, visto: vistos[campo.caminho] }] } });
@@ -1475,7 +1668,7 @@ async function telaListaCampanhas(grupo, aviso = "") {
   const linhas = lista.map((x, i) => {
     const excluir = h("button", { class: "acao perigo", type: "button", "aria-label": `Excluir a campanha ${x.titulo}` }, "🗑️ Excluir");
     excluir.addEventListener("click", async () => {
-      if (!confirm(`Excluir a campanha "${x.titulo}"? Ela sai do site na próxima publicação.`)) return;
+      if (!(await confirmarNaTela(excluir, `Excluir a campanha "${x.titulo}"? Ela sai do site na próxima publicação.`, { sim: "Sim, excluir", tom: "perigo" }))) return;
       ocupado(excluir, true);
       const r = await salvarCampo(campo, lista.filter((_, j) => j !== i), msg);
       ocupado(excluir, false);
@@ -1488,10 +1681,11 @@ async function telaListaCampanhas(grupo, aviso = "") {
       h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", "aria-label": `Editar a campanha ${x.titulo}`, onclick: () => ir(`conteudo/${grupo.id}/${i}`) }, "✏️ Editar"), excluir));
   });
   const descartar = campo.rascunho && h("button", { class: "botao claro", type: "button", onclick: async () => {
-    if (!confirm("Desfazer as mudanças salvas nas campanhas e voltar ao que está no site?")) return;
+    if (!(await confirmarNaTela(descartar, "Desfazer as mudanças salvas nas campanhas e voltar ao que está no site?", { sim: "Sim, desfazer", tom: "perigo" }))) return;
+    ocupado(descartar, true);
     const res = await descartarCampo(campo.caminho, campo.rascunho.em ?? null);
     if (outraPessoaMudou(res)) return telaGrupo(grupo.id, "", res.dados.erro);
-    if (res.status !== 200) return mensagem(msg, res.dados.erro);
+    if (res.status !== 200) { ocupado(descartar, false); return mensagem(msg, res.dados.erro); }
     atualizarPrevia();
     telaGrupo(grupo.id);
   } }, "Voltar ao que está no site");
@@ -1645,10 +1839,11 @@ async function telaGrupo(id, sub = "", aviso = "", procurar) {
       const descartar = h("button", { class: "botao claro", type: "button" }, "Voltar ao que está no site");
       descartar.addEventListener("click", async () => {
         // A tela é desenhada de novo: com vídeo ou foto subindo (de qualquer campo), pergunta antes (item 56).
-        if (!podeSairDaTela()) return;
+        if (!(await podeSairDaTela()) || !descartar.isConnected) return;
         // Um toque errado no celular apagava a versão salva (ex.: as frases do CEO) e o que ela digitou aqui, sem
         // perguntar; Campanhas e "Remover" uma frase já perguntavam (rodada 2 da conferência).
-        if (!confirm(`Voltar ao que está no site? A versão salva por ${c.rascunho.por} some${entrada.mudou() ? " e o que você digitou agora também" : ""}.`)) return;
+        if (!(await confirmarNaTela(descartar, `Voltar ao que está no site? A versão salva por ${c.rascunho.por} some${entrada.mudou() ? " e o que você digitou agora também" : ""}.`,
+          { sim: "Sim, voltar ao site", tom: "perigo" }))) return;
         ocupado(descartar, true);
         const res = await descartarCampo(c.caminho, c.rascunho.em ?? null);
         if (outraPessoaMudou(res)) {
@@ -1688,7 +1883,7 @@ async function telaGrupo(id, sub = "", aviso = "", procurar) {
     if (!mudados.length) return mensagem(msg, "Nada mudou nesta tela.", "ajuda");
     mensagem(msg, "");
     ocupado(salvar, true, "Salvando…");
-    const vistos = await podeSalvarPorCima(mudados.map((x) => ({ caminho: x.c.caminho, em: x.c.rascunho?.em, nome: x.c.nome })));
+    const vistos = await podeSalvarPorCima(mudados.map((x) => ({ caminho: x.c.caminho, em: x.c.rascunho?.em, nome: x.c.nome })), salvar);
     if (vistos === null) return;
     if (!vistos) {
       for (const x of mudados) guardarEm(x.chave, x.entrada.ler(), x.valorAtual);
@@ -1790,7 +1985,7 @@ function listaDeInvalidos(invalidos, { nomes = {}, descartavel = false, aoDevolv
       const descartar = descartavel && h("button", { class: "botao claro", type: "button" }, "Descartar esta mudança");
       if (descartar) {
         descartar.addEventListener("click", async () => {
-          if (!confirm(`Descartar a mudança salva em "${nomeDe(x.caminho)}"? Ela não vai para o site.`)) return;
+          if (!(await confirmarNaTela(descartar, `Descartar a mudança salva em "${nomeDe(x.caminho)}"? Ela não vai para o site.`, { sim: "Sim, descartar", tom: "perigo" }))) return;
           ocupado(descartar, true);
           const res = await descartarCampo(x.caminho, vistos && Object.hasOwn(vistos, x.caminho) ? vistos[x.caminho] ?? null : undefined);
           if (outraPessoaMudou(res) && recarregar) return recarregar(res.dados.erro);
@@ -1890,7 +2085,10 @@ async function telaPublicar(aviso) {
   const nomes = Object.fromEntries((r.dados.mudancas || []).map((m) => [m.caminho, m.nome]));
   const mudancas = rasc.dados.mudancas || {};
   const vistas = vistasDe(mudancas);
-  const lista = Object.entries(mudancas).map(([caminho, m]) => ({ caminho, ...m, nome: mapa[caminho]?.nome || nomes[caminho] || caminho }));
+  const lista = Object.entries(mudancas).map(([caminho, m]) => ({ caminho, ...m, nome: mapa[caminho]?.nome || nomes[caminho] || caminho,
+    // Salvo igual ao que estava no site (ex.: desligou e ligou de novo): vai junto, mas não muda nada (teste de 27/10).
+    igual: Object.hasOwn(m, "antes") && JSON.stringify(m.antes) === JSON.stringify(m.valor) }));
+  const queMudam = lista.filter((m) => !m.igual).length;
   const msg = h("p", { class: "erro" });
   const botao = h("button", { class: "botao verde cheio", type: "button", disabled: !lista.length }, "Publicar no site");
   // "onde": a mensagem da tela que está na frente (depois da tela de conflitos, é a dela).
@@ -1900,7 +2098,7 @@ async function telaPublicar(aviso) {
       { nomes: Object.fromEntries(lista.map((m) => [m.caminho, m.nome])), descartavel: true, vistos: vistas, recarregar: (erro) => telaPublicar(erro) });
   };
   botao.addEventListener("click", async () => {
-    if (!confirm(`Publicar ${lista.length} mudança(s) no site? Conta 1 publicação do mês.`)) return;
+    if (!(await confirmarNaTela(botao, `Publicar ${queMudam} mudança(s) no site? Conta 1 publicação do mês.`, { sim: "Sim, publicar", tom: "verde" }))) return;
     ocupado(botao, true, "Publicando…");
     await publicar({});
     ocupado(botao, false);
@@ -1910,6 +2108,7 @@ async function telaPublicar(aviso) {
     h("div", { class: "cartao" },
       lista.length ? h("ul", { class: "lista" }, lista.map((m) => h("li", {}, h("strong", { text: m.nome }),
         h("div", { class: "miudo", text: `Salvo por ${m.por} em ${quando(m.em)}` }),
+        m.igual && h("p", { class: "ajuda", text: "Igual ao que já está no site: não muda nada." }),
         Object.hasOwn(m, "antes") ? antesDepois(m.antes, m.valor, mapa[m.caminho], ["No site (quando foi salvo)", "Vai para o site"])
           : h("div", { class: "antes-depois um" }, h("div", {}, h("b", { text: "Vai para o site" }), valorNaTela(m.valor, mapa[m.caminho]))))))
         : h("p", { text: "Não há mudanças salvas para publicar." }),
@@ -1992,12 +2191,17 @@ async function telaAprovacoes() {
         area.focus();
       }
       const aprovar = h("button", { class: "botao verde", type: "button" }, e.preso ? "Tentar publicar de novo" : "Aprovar e publicar");
-      aprovar.addEventListener("click", () => confirm(e.preso
-        ? "Tentar publicar de novo? Se já tiver entrado no site, o painel só confirma."
-        : "Aprovar e publicar no site? Conta 1 publicação do mês.") && decidir({ acao: "aprovar" }, aprovar));
+      aprovar.addEventListener("click", async () => {
+        const sim = await confirmarNaTela(aprovar, e.preso
+          ? "Tentar publicar de novo? Se já tiver entrado no site, o painel só confirma."
+          : "Aprovar e publicar no site? Conta 1 publicação do mês.", { sim: e.preso ? "Sim, tentar de novo" : "Sim, aprovar e publicar", tom: "verde" });
+        if (sim) decidir({ acao: "aprovar" }, aprovar);
+      });
       const devolver = h("button", { class: "botao claro", type: "button", onclick: () => abrirRecado() }, "Devolver com recado");
       const descartar = h("button", { class: "botao perigo", type: "button" }, "Descartar");
-      descartar.addEventListener("click", () => confirm("Descartar estas mudanças? Elas não vão para o site.") && decidir({ acao: "descartar" }, descartar));
+      descartar.addEventListener("click", async () => {
+        if (await confirmarNaTela(descartar, "Descartar estas mudanças? Elas não vão para o site.", { sim: "Sim, descartar", tom: "perigo" })) decidir({ acao: "descartar" }, descartar);
+      });
       acoes.append(aprovar, devolver, descartar);
       if (lerGuardado(chaveRecado)) abrirRecado(); // recado digitado antes de a entrada vencer
     }
@@ -2033,7 +2237,7 @@ async function telaHistorico() {
         await resultadoPublicacao(res, onde, (novas, m) => pedirDesfazer({ ...escolhas, ...novas }, m), { nomes });
       };
       desfazer.addEventListener("click", async () => {
-        if (!confirm("Voltar estes campos para como estavam antes? Conta 1 publicação do mês.")) return;
+        if (!(await confirmarNaTela(desfazer, "Voltar estes campos para como estavam antes? Conta 1 publicação do mês.", { sim: "Sim, desfazer" }))) return;
         ocupado(desfazer, true, "Desfazendo…");
         await pedirDesfazer({});
         ocupado(desfazer, false);
@@ -2083,14 +2287,11 @@ function formReconfirmar(titulo, explicacao, extras, aoConfirmar) {
   casca(h("button", { class: "voltar", type: "button", onclick: () => ir("acessos") }, "‹ Voltar para Acessos"), form);
 }
 
+// Decisão da dona em 27/10: o painel é só da Bruna e do CEO. Só a administradora convida, e só como Responsável.
 function telaConvidar() {
-  const papeis = eu.papel === "admin" ? [["responsavel", "Responsável (Bruna, CEO): publica direto e aprova"], ["funcionaria", "Funcionária: salva e envia para aprovação"]]
-    : [["funcionaria", "Funcionária: salva e envia para aprovação"]];
-  let papel = papeis[0][0];
-  const opcoes = papeis.map(([valor, texto], i) => h("label", { class: "escolha" },
-    h("input", { type: "radio", name: "papel", value: valor, checked: i === 0, onchange: () => { papel = valor; } }), h("span", { text: texto })));
-  formReconfirmar("Convidar pessoa", "Gere um link e mande para a pessoa. Ela mesma digita o e-mail e cria a senha.",
-    [h("p", { class: "rotulo", text: "Papel da pessoa" }), ...opcoes],
+  const papel = "responsavel";
+  formReconfirmar("Convidar a Bruna ou o CEO", "Gere um link e mande para a pessoa. Ela mesma digita o e-mail e cria a senha.",
+    [h("p", { class: "ajuda", text: "O painel é só para a Bruna e o CEO: os dois publicam direto no site." })],
     async (email, senha) => {
       const r = await pedir("convites", { metodo: "POST", corpo: { tipo: "cadastro", papel, email, senha } });
       if (r.status !== 201) return r.dados.erro;
@@ -2122,7 +2323,7 @@ async function telaAcessos() {
     if (p.podeMexer) {
       const ligar = h("button", { class: p.ativo ? "botao perigo" : "botao claro", type: "button" }, p.ativo ? "Desligar acesso" : "Religar acesso");
       ligar.addEventListener("click", async () => {
-        if (p.ativo && !confirm(`Desligar o acesso de ${p.nome}? Ela sai do painel na hora.`)) return;
+        if (p.ativo && !(await confirmarNaTela(ligar, `Desligar o acesso de ${p.nome}? Ela sai do painel na hora.`, { sim: "Sim, desligar", tom: "perigo" }))) return;
         ocupado(ligar, true);
         const r = await pedir("acessos", { metodo: "POST", corpo: { ...quemE(p), acao: p.ativo ? "desligar" : "religar" } });
         if (r.status !== 200) { ocupado(ligar, false); return mensagem(msg, r.dados.erro); }
@@ -2135,7 +2336,7 @@ async function telaAcessos() {
       if (eu.papel === "admin" && !p.ativo) {
         const apagar = h("button", { class: "botao perigo", type: "button" }, "Apagar dados");
         apagar.addEventListener("click", async () => {
-          if (!confirm(`Apagar de vez os dados de ${p.nome}? Não dá para desfazer.`)) return;
+          if (!(await confirmarNaTela(apagar, `Apagar de vez os dados de ${p.nome}? Não dá para desfazer.`, { sim: "Sim, apagar", tom: "perigo" }))) return;
           ocupado(apagar, true);
           const r = await pedir("acessos", { metodo: "POST", corpo: { ...quemE(p), acao: "apagar" } });
           if (r.status !== 200) { ocupado(apagar, false); return mensagem(msg, r.dados.erro); }
@@ -2171,7 +2372,7 @@ async function telaAcessos() {
       h("div", { class: "miudo", text: `Criado por ${c.criadoPor} · vence ${quando(c.expira)}` }), h("div", { class: "botoes" }, cancelar));
   });
   await casca(voltar(), h("h1", { text: "Acessos" }),
-    h("button", { class: "botao verde cheio", type: "button", onclick: telaConvidar }, "+ Convidar pessoa"),
+    eu.papel === "admin" && h("button", { class: "botao verde cheio", type: "button", onclick: telaConvidar }, "+ Convidar a Bruna ou o CEO"),
     h("div", { class: "cartao" }, h("h2", { text: "Quem tem acesso" }), msg, linhas.length ? h("ul", { class: "lista" }, linhas) : h("p", { text: "Ninguém ainda." })),
     convites.status !== 200 && h("div", { class: "cartao" }, h("h2", { text: "Convites ainda não usados" }), h("p", { class: "erro", text: convites.dados.erro })),
     abertos.length > 0 && h("div", { class: "cartao" }, h("h2", { text: "Convites ainda não usados" }), h("ul", { class: "lista" }, abertos)),
