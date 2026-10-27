@@ -25,6 +25,8 @@ function tipoDoValor(v, regra) {
   if (regra && typeof regra.tipo === "string") return regra.tipo;
   if (typeof v === "boolean") return "ligado";
   if (Array.isArray(v)) {
+    // Lista de fotos (Resultados reais): arquivo + tipo, sem capa. Lista de vídeos: arquivo (e capa, título).
+    if (v.some((x) => x && typeof x === "object" && "arquivo" in x && "tipo" in x && !("capa" in x))) return "fotos";
     if (v.some((x) => x && typeof x === "object" && "arquivo" in x)) return "videos";
     if (v.some((x) => x && typeof x === "object" && ("termina" in x || "titulo" in x))) return "campanhas";
     // Lista só de frases (destaques, para quem é...): mesmo sem as regras, aparece frase por frase (contrato C1).
@@ -393,6 +395,7 @@ function valorNaTela(v, regra, outro, lado = "depois") {
       h("span", { class: "miudo", text: String(v).startsWith("foto:") ? "Foto nova (enviada pelo painel)" : String(v).split("/").pop() }));
   }
   if (tipo === "videos") return videosNaTela(v, outro, lado);
+  if (tipo === "fotos") return fotosNaTela(v, outro, lado, regra);
   if (tipo === "campanhas") return campanhasNaTela(v, outro, lado);
   if (tipo === "lista-de-textos") return textosNaTela(v, outro, lado);
   if (tipo === "lista") return h("span", { text: Array.isArray(v) && v.length ? `${v.length} item(ns)` : "(nenhum)" });
@@ -437,6 +440,27 @@ function videosNaTela(v, outro, lado) {
         !visivelDe(x) && etiqueta(lado === "depois" && em(dif.esconderam, x) ? "Escondido agora" : "Escondido", "cinza"),
         lado === "depois" && em(dif.apareceram, x) && etiqueta("Volta a aparecer", "verde"),
         lado === "depois" && em(dif.capas, x) && etiqueta("Capa nova"))))));
+}
+
+// Lista de fotos (Resultados reais): miniatura de cada uma, com o tipo e o que entrou, saiu ou ficou escondido.
+const TIPOS_DE_FOTO = { "antes-e-depois": "Antes e depois", resultado: "Resultado", comentario: "Comentário de cliente" };
+const rotuloDoTipoDeFoto = (tipo, regra) => regra?.rotulos?.[tipo] || TIPOS_DE_FOTO[tipo] || tipo;
+function fotosNaTela(v, outro, lado, regra) {
+  const fs = soObjetos(v);
+  if (!fs.length) return h("span", { class: "miudo", text: "(nenhuma foto)" });
+  const comparar = outro !== undefined;
+  const dif = lado === "antes" ? diferencaDeVideos(v, outro) : diferencaDeVideos(outro, v);
+  const em = (lista, x) => comparar && lista.includes(x);
+  const resumo = comparar && lado === "depois" ? resumoDeVideos({ ...dif, ordemMudou: false }) : "";
+  return h("div", {},
+    h("p", { class: "miudo", text: `${fs.length} ${fs.length === 1 ? "foto" : "fotos"}${resumo ? ` · ${resumo}` : ""}` }),
+    h("ol", { class: "valor-lista" }, fs.map((x) => h("li", { class: "valor-item" },
+      miniatura(x.arquivo, rotuloDoTipoDeFoto(x.tipo, regra), true),
+      h("span", {}, h("span", { text: rotuloDoTipoDeFoto(x.tipo, regra) }), " ",
+        lado === "depois" && em(dif.entraram, x) && etiqueta("Nova", "verde"),
+        lado === "antes" && em(dif.sairam, x) && etiqueta("Sai", "laranja"),
+        !visivelDe(x) && etiqueta(lado === "depois" && em(dif.esconderam, x) ? "Escondida agora" : "Escondida", "cinza"),
+        lado === "depois" && em(dif.apareceram, x) && etiqueta("Volta a aparecer", "verde"))))));
 }
 
 function campanhasNaTela(v, outro, lado) {
@@ -806,6 +830,7 @@ function resumoDoCampo(c, comItem) {
     return `${rotulo} (${titulos(c.noSite) === titulos(valor) ? "igual ao site" : "ordem mudou"})`;
   }
   if (c.tipo === "videos") return comResumo(resumoDeVideos(diferencaDeVideos(c.noSite, valor)));
+  if (c.tipo === "fotos") return comResumo(resumoDeVideos({ ...diferencaDeVideos(c.noSite, valor), ordemMudou: false }));
   if (c.tipo === "lista-de-textos") return comResumo(resumoDeTextos(diferencaDeTextos(c.noSite, valor)));
   if (["ligado", "escolha", "data"].includes(c.tipo)) return `${rotulo}: ${textoSimples(valor, c)}`;
   if (c.tipo === "foto") return `${rotulo} nova`;
@@ -1190,6 +1215,86 @@ function entradaDeFoto(c, valor, aoMudar) {
     mudou: () => atual !== inicial, definir: (v) => { atual = v; mostrarAtual(); } };
 }
 
+// Fotos (lista, ex.: Resultados reais): a lista inteira é o valor do campo, como nos vídeos. Decisão da dona em 27/10:
+// pôr, tirar e esconder, sem mudar a ordem (foto nova entra no fim). Cada foto tem o tipo, que muda o jeito no site.
+const normalizarFotos = (fs) => soObjetos(fs).map((f) => ({ arquivo: String(f.arquivo ?? ""), tipo: String(f.tipo ?? ""), visivel: visivelDe(f) }));
+function entradaDeFotos(c, valor, aoMudar) {
+  let lista = normalizarFotos(valor);
+  const opcoes = Array.isArray(c.opcoes) && c.opcoes.length ? c.opcoes : Object.keys(TIPOS_DE_FOTO);
+  const caixa = h("div");
+  const nota = h("p", { class: "ajuda", role: "status" });
+  const erroFoto = h("p", { class: "erro" });
+  const mexeu = () => aoMudar?.();
+  const locais = new Map(); // "foto:<id>" -> endereço da foto neste aparelho (a miniatura aparece na hora)
+  const seletorDeTipo = (atual, rotulo, aoTrocar) => {
+    const s = h("select", { "aria-label": rotulo }, opcoes.map((o) => h("option", { value: o, text: rotuloDoTipoDeFoto(o, c) })));
+    s.value = opcoes.includes(atual) ? atual : opcoes[0];
+    s.addEventListener("change", () => aoTrocar(s.value));
+    return s;
+  };
+  const desenhar = () => {
+    caixa.replaceChildren(...lista.map((f, i) => {
+      const visivel = h("input", { type: "checkbox", checked: f.visivel !== false });
+      visivel.addEventListener("change", () => { f.visivel = visivel.checked; mexeu(); });
+      return h("div", { class: "video-item" },
+        h("img", { class: "previa-foto", alt: `Foto ${i + 1}`, src: locais.get(f.arquivo) || enderecoDeImagem(f.arquivo) }),
+        h("div", { class: "miudo", text: f.arquivo.startsWith("foto:") ? "Foto nova (vai ao site ao publicar)" : f.arquivo.split("/").pop() }),
+        seletorDeTipo(f.tipo, `Tipo da foto ${i + 1}`, (v) => { f.tipo = v; mexeu(); }),
+        h("label", { class: "escolha" }, visivel, h("span", { text: "Aparece no site" })),
+        h("div", { class: "botoes" },
+          h("button", { class: "botao perigo", type: "button", "aria-label": `Tirar a foto ${i + 1}`, onclick: () => { lista.splice(i, 1); desenhar(); mexeu(); } }, "Tirar")));
+    }));
+    if (!lista.length) caixa.append(h("p", { class: "miudo", text: "Nenhuma foto." }));
+  };
+  let tipoNovo = opcoes.includes("resultado") ? "resultado" : opcoes[0];
+  const escolherTipo = seletorDeTipo(tipoNovo, "Tipo da foto nova", (v) => { tipoNovo = v; });
+  const escolher = h("input", { type: "file", accept: "image/*", id: novoId() });
+  const el = h("div", {}, caixa,
+    h("div", { class: "campo" }, h("span", { class: "rotulo", text: "Tipo da foto nova" }), escolherTipo),
+    h("label", { class: "rotulo", for: escolher.id, text: "+ Adicionar foto" }), escolher, nota, erroFoto,
+    h("p", { class: "ajuda", text: "Só envie foto com a autorização da cliente. A foto nova entra no fim da lista." }));
+  escolher.addEventListener("change", async () => {
+    const arquivo = escolher.files[0];
+    escolher.value = "";
+    if (!arquivo) return;
+    mensagem(erroFoto, "");
+    nota.textContent = "Diminuindo e enviando a foto…";
+    const rota = location.hash.replace(/^#/, "");
+    enviosEmAndamento++;
+    escolher.disabled = true;
+    try {
+      const leve = await diminuirFoto(arquivo);
+      let r;
+      try {
+        r = await fetch(`${API}foto`, { method: "POST", credentials: "same-origin", headers: { "X-Painel": "1", "Content-Type": leve.type }, body: leve });
+      } catch { throw erroParaPessoa("Sem internet ou o painel não respondeu. Tente de novo."); }
+      const dados = await r.json().catch(() => ({}));
+      if (r.status === 401 && eu) { eu = null; return telaEntrar(dados.erro); }
+      if (r.status !== 201) throw erroParaPessoa(dados.erro || "Não foi possível enviar a foto.");
+      locais.set(dados.valor, URL.createObjectURL(leve));
+      lista.push({ arquivo: dados.valor, tipo: tipoNovo, visivel: true });
+      desenhar();
+      mexeu();
+      nota.textContent = `Foto pronta (${Math.round(leve.size / 1024)} KB). Toque em Salvar.`;
+      avisarEnvioTerminado(el, `A foto de "${c.nome || "Fotos"}" terminou de subir e ficou guardada neste aparelho.`, rota);
+    } catch (e) {
+      nota.textContent = "";
+      mensagem(erroFoto, e.paraPessoa ? e.message : "Não foi possível usar esta foto. Tente outra.");
+    } finally {
+      enviosEmAndamento--;
+      escolher.disabled = false;
+    }
+  });
+  desenhar();
+  const ler = () => lista.map(({ arquivo, tipo, visivel }) => ({ arquivo, tipo, visivel: visivel !== false }));
+  const inicial = JSON.stringify(ler());
+  return {
+    el, ler, foco: escolher, lista: true,
+    mudou: () => JSON.stringify(ler()) !== inicial,
+    definir: (v) => { lista = normalizarFotos(v); desenhar(); },
+  };
+}
+
 // Vídeos: a lista inteira é o valor do campo. O celular confere (MP4, até 20 MB), tira a capa de um quadro do
 // próprio vídeo e envia em partes de até 4 MB. Acima de 8 MB, o robô diminui ao publicar.
 const VIDEO_MAX = 20 * 1024 * 1024;
@@ -1551,6 +1656,7 @@ function entradaDoCampo(c, valor, aoMudar) {
   if (c.tipo === "campanhas") return entradaDeCampanhas(c, valor, aoMudar);
   if (c.tipo === "foto") return entradaDeFoto(c, valor, aoMudar);
   if (c.tipo === "videos") return entradaDeVideos(c, valor, aoMudar);
+  if (c.tipo === "fotos") return entradaDeFotos(c, valor, aoMudar);
   if (c.tipo === "ligado") {
     const caixa = h("input", { type: "checkbox", checked: valor === true });
     const texto = h("span", { text: valor === true ? "Ligado" : "Desligado" });
