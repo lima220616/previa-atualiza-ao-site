@@ -1294,15 +1294,13 @@ function entradaDeVideos(c, valor, aoMudar) {
       titulo.addEventListener("input", () => { v.titulo = titulo.value; mexeu(); });
       const visivel = h("input", { type: "checkbox", checked: v.visivel !== false });
       visivel.addEventListener("change", () => { v.visivel = visivel.checked; mexeu(); });
-      const mover = (passo) => { const j = i + passo; if (j < 0 || j >= lista.length) return; [lista[i], lista[j]] = [lista[j], lista[i]]; desenhar(); mexeu(); };
+      // Decisão da dona em 27/10: nos vídeos a Bruna só põe e tira; a ordem não muda pelo painel (sem Subir/Descer).
       return h("div", { class: "video-item" },
         v.capa ? h("img", { class: "previa-foto", alt: `Capa do vídeo ${i + 1}`, src: enderecoDeImagem(v.capa) }) : h("div", { class: "miudo", text: "Sem capa" }),
         h("div", { class: "miudo", text: v.arquivo.startsWith("video:") ? "Vídeo novo (vai ao site ao publicar)" : v.arquivo.split("/").pop() }),
         titulo,
         h("label", { class: "escolha" }, visivel, h("span", { text: "Aparece no site" })),
         h("div", { class: "botoes" },
-          h("button", { class: "botao claro", type: "button", disabled: i === 0, "aria-label": `Subir o vídeo ${i + 1}`, onclick: () => mover(-1) }, "↑ Subir"),
-          h("button", { class: "botao claro", type: "button", disabled: i === lista.length - 1, "aria-label": `Descer o vídeo ${i + 1}`, onclick: () => mover(1) }, "↓ Descer"),
           h("button", { class: "botao perigo", type: "button", "aria-label": `Tirar o vídeo ${i + 1}`, onclick: () => { lista.splice(i, 1); desenhar(); mexeu(); } }, "Tirar")));
     }));
     if (!lista.length) caixa.append(h("p", { class: "miudo", text: "Nenhum vídeo. No site aparece \"Em breve\"." }));
