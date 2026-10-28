@@ -1,0 +1,38 @@
+/* Fontes da Brumar servidas pelo próprio site (a proteção do site, CSP default-src 'self', bloqueia o Google Fonts).
+   Arquivos baixados do Google Fonts em 20/10/2026, só o pedaço "latin" (cobre todo o português).
+   Montserrat e Playfair Display são fontes "variáveis": o Google manda o MESMO arquivo para todos os pesos,
+   então cada uma tem um arquivo só, e a faixa de pesos abaixo diz quais pesos ele atende.
+   As faixas param em 700 de propósito: hoje o site pede 800 e 900 em alguns lugares, mas o Google só carrega até 700,
+   e o navegador mostra esses textos em 700. Com a faixa parando em 700, o visual fica idêntico ao de hoje.
+   Licença: SIL Open Font License 1.1 (arquivos OFL-*.txt nesta pasta). Se um arquivo for trocado, troque também o nome
+   (a pasta /assets/ fica guardada no celular por 1 ano). */
+
+/* Montserrat: texto do site (pesos usados: 400, 500, 600, 700) */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/assets/fontes/montserrat-variavel.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Playfair Display: títulos (pesos usados: 600, 700; o 500 vem no mesmo arquivo, sem custo, igual ao link de hoje) */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("/assets/fontes/playfair-display-variavel.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Great Vibes: só a assinatura "O Poder da Transformação" no rodapé do site (peso único 400) */
+@font-face {
+  font-family: 'Great Vibes';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/assets/fontes/great-vibes-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
