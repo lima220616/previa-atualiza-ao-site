@@ -1,0 +1,1 @@
+(function(){document.querySelectorAll('.more-b').forEach(function(b){var t=document.getElementById(b.getAttribute('data-more'));if(!t)return;b.addEventListener('click',function(){var o=t.classList.toggle('open');b.setAttribute('aria-expanded',o);b.textContent=o?'Mostrar menos':b.getAttribute('data-label');if(!o)b.scrollIntoView({block:'center',behavior:'smooth'})})})})();

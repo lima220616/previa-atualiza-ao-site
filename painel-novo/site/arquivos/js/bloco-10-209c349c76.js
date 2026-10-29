@@ -1,0 +1,1 @@
+(function(){var v=document.getElementById('v-magda');document.querySelectorAll('[data-vid-magda]').forEach(function(a){a.addEventListener('click',function(e){e.preventDefault();if(!v)return;try{v.currentTime=0}catch(x){}var pr=v.play();if(pr&&pr.catch)pr.catch(function(){})})})})();

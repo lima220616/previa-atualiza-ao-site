@@ -38,6 +38,12 @@ function tipoDoValor(v, regra) {
   return "texto";
 }
 
+// WhatsApp como o site escreve: "5564993192101" -> "(64) 99319-2101" (o mesmo do numeroEscrito do molde).
+function whatsappEscrito(v) {
+  const n = String(v ?? "").replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "");
+  return n.length >= 10 ? `(${n.slice(0, 2)}) ${n.slice(2, -4)}-${n.slice(-4)}` : String(v ?? "");
+}
+
 // Valor simples (texto, link, data, escolha, ligado) como a pessoa entende: rótulo da escolha, data brasileira,
 // "Ligado"/"Desligado". Nunca o código cru ("nevoa", "2026-11-30T23:59"; item 60).
 function textoSimples(v, regra) {
@@ -47,6 +53,7 @@ function textoSimples(v, regra) {
   if (v === undefined || v === null || v === "") return "(vazio)";
   if (tipo === "ligado") return v === true ? "Ligado" : v === false ? "Desligado" : String(v);
   if (tipo === "data") return dataBR(v);
+  if (tipo === "whatsapp") return whatsappEscrito(v);
   if (typeof v === "object") return "(conteúdo que o painel não sabe mostrar)";
   return String(v);
 }
@@ -377,7 +384,7 @@ async function confirmarNaTela(botao, texto, opcoes) {
 }
 
 // ---------- como cada valor aparece na tela (Aprovações, conflitos, Histórico, Publicar, Enviar; itens 4 e 60) ----------
-const enderecoDeImagem = (v) => (String(v).startsWith("foto:") ? `${API}foto?id=${encodeURIComponent(String(v).slice(5))}` : String(v));
+const enderecoDeImagem = (v) => window.demoFotoDe?.(v) || (String(v).startsWith("foto:") ? `${API}foto?id=${encodeURIComponent(String(v).slice(5))}` : String(v));
 const vazio = (v) => v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length);
 function miniatura(endereco, alt, pequena) {
   const img = h("img", { class: `miniatura${pequena ? " pequena" : ""}`, src: enderecoDeImagem(endereco), alt, loading: "lazy" });
@@ -501,7 +508,7 @@ let regrasCache = null; // { dono, mapa, menu }
 function anotarRegras(dados) {
   const mapa = {};
   for (const g of dados?.grupos || []) for (const c of g.campos || []) mapa[c.caminho] = { tipo: c.tipo, rotulos: c.rotulos, opcoes: c.opcoes, nome: c.nome, rotulo: c.rotulo };
-  const menu = (dados?.grupos || []).map(({ id, titulo, icone }) => ({ id, titulo, icone }));
+  const menu = (dados?.grupos || []).map(({ id, titulo, icone, dentroDe }) => ({ id, titulo, icone, dentroDe }));
   regrasCache = { dono: eu?.email, mapa, menu };
 }
 // O menu e as telas pedem as regras juntos: um pedido só.
@@ -747,7 +754,8 @@ function garantirEstrutura() {
   if (estrutura.iframe) atualizarPrevia();
   // Os grupos do menu vêm das regras já lidas (sem pedir de novo ao GitHub) ou de um pedido só.
   const montarMenu = (grupos) => {
-    gruposMenu.replaceChildren(...grupos.map((g) => itemLateral(g.icone || "✏️", g.titulo, `conteudo/${g.id}`)));
+    // Grupo "dentroDe" outro (Banners) abre pela tela do de fora (Campanhas), não pelo menu.
+    gruposMenu.replaceChildren(...grupos.filter((g) => !g.dentroDe).map((g) => itemLateral(g.icone || "✏️", g.titulo, `conteudo/${g.id}`)));
     marcarAtivo();
   };
   if (regrasCache && regrasCache.dono === eu.email) montarMenu(regrasCache.menu);
@@ -1133,8 +1141,9 @@ async function telaConteudo() {
       h("div", { class: "cartao" }, h("p", { text: "Ainda não há telas de conteúdo neste painel (as regras do site estão sem grupos). Avise a administradora." })));
   }
   await casca(voltar(), h("h1", { text: "Conteúdo do site" }),
-    h("div", { class: "menu" }, grupos.map((g) => {
-      const salvos = g.campos.filter((c) => c.rascunho).length;
+    // Grupo "dentroDe" outro (Banners, dentro de Campanhas) não tem linha própria: as mudanças dele contam no de fora.
+    h("div", { class: "menu" }, grupos.filter((g) => !g.dentroDe).map((g) => {
+      const salvos = [g, ...grupos.filter((x) => x.dentroDe === g.id)].flatMap((x) => x.campos).filter((c) => c.rascunho).length;
       return itemMenu(g.icone || "✏️", g.titulo, salvos ? `${salvos} mudança(s) salva(s) · ${g.descricao}` : g.descricao, `conteudo/${g.id}`);
     })));
 }
@@ -1678,6 +1687,19 @@ function entradaDoCampo(c, valor, aoMudar) {
     return { el: sel, ler, foco: sel, mudou: () => sel.value !== "" && ler() !== valor,
       definir: (v) => { const i = opcoes.findIndex((o) => o === v); if (i >= 0) sel.value = String(i); } };
   }
+  if (c.tipo === "whatsapp") {
+    // Mostra "(64) 99319-2101"; o servidor guarda só os números. "Testar" abre o WhatsApp com o número digitado, para a
+    // pessoa conferir se é o certo antes de salvar.
+    const entrada = h("input", { type: "tel", inputmode: "tel", autocomplete: "off", placeholder: "(64) 99999-9999", maxlength: 20 });
+    entrada.value = whatsappEscrito(valor);
+    const digitos = () => { const n = entrada.value.replace(/\D/g, ""); return n.length === 10 || n.length === 11 ? `55${n}` : n; };
+    const testar = h("a", { class: "botao claro", target: "_blank", rel: "noopener", text: "Testar no WhatsApp" });
+    const ajustar = () => { const n = digitos(); if (/^55[1-9]{2}\d{8,9}$/.test(n)) testar.href = `https://wa.me/${n}`; else testar.removeAttribute("href"); };
+    ajustar();
+    entrada.addEventListener("input", () => { ajustar(); aoMudar?.(); });
+    return { el: h("div", { class: "whatsapp" }, entrada, testar), ler: () => entrada.value, foco: entrada,
+      mudou: () => digitos() !== String(valor ?? ""), definir: (v) => { entrada.value = whatsappEscrito(v); ajustar(); } };
+  }
   const props = c.tipo === "data" ? { type: "datetime-local" }
     : c.tipo === "link" ? { type: "url", inputmode: "url", placeholder: "https://… ou um atalho do site, como /loja/" } : {};
   const grande = c.tipo === "texto" && c.max > 100;
@@ -1760,8 +1782,14 @@ const listaDoCampo = (campo) => {
 // Aviso no alto da tela que acabou de ser desenhada de novo (ex.: "Outra pessoa mudou isto agora há pouco").
 const avisoNoAlto = (aviso) => aviso && h("p", { class: "erro", role: "alert", text: aviso });
 
-async function telaListaCampanhas(grupo, aviso = "") {
+// "dentro": os grupos que abrem por um botão nesta tela (29/10: os Banners do topo, que são banners de campanha).
+async function telaListaCampanhas(grupo, aviso = "", dentro = []) {
   const campo = grupo.campos[0];
+  const botoesDeDentro = dentro.length > 0 && h("div", { class: "botoes" }, dentro.map((g) => {
+    const salvos = g.campos.filter((c) => c.rascunho).length;
+    return h("button", { class: "botao claro", type: "button", onclick: () => ir(`conteudo/${g.id}`) },
+      `${g.icone || "🖼️"} ${g.titulo}${salvos ? ` · ${salvos} mudança(s) salva(s)` : ""}`);
+  }));
   const lista = listaDoCampo(campo);
   const msg = h("p", { class: "erro" });
   const max = campo.max || 6;
@@ -1795,6 +1823,7 @@ async function telaListaCampanhas(grupo, aviso = "") {
   } }, "Voltar ao que está no site");
   await casca(cabecalhoLista(grupo.titulo, adicionar), avisoNoAlto(aviso),
     h("p", { class: "sub", text: "O site mostra uma contagem só: a da campanha ligada que termina primeiro. Quando ela acaba, entra a próxima." }),
+    botoesDeDentro,
     h("div", { class: "cartao" },
       lista.length ? tabela(["Campanha", "Termina", "Situação", "Ações"], linhas) : h("p", { text: "Nenhuma campanha cadastrada. Toque em \"+ Adicionar\"." }),
       campo.rascunho && h("p", { class: "miudo", text: `Mudanças salvas por ${campo.rascunho.por} em ${quando(campo.rascunho.em)}, ainda não publicadas.` }),
@@ -1910,7 +1939,8 @@ async function telaListaItens(grupo) {
       h("td", {}, situacao),
       h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", "aria-label": `Editar ${it.nome}`, onclick: () => ir(`conteudo/${grupo.id}/${it.chave}`) }, "✏️ Editar")));
   });
-  await casca(cabecalhoLista(grupo.titulo), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }), botoesDoFiltro,
+  const voltarParaFora = grupo.dentroDe && h("button", { class: "voltar", type: "button", onclick: () => ir(`conteudo/${grupo.dentroDe}`) }, `‹ ${grupo.tituloDeFora || "Voltar"}`);
+  await casca(voltarParaFora, cabecalhoLista(grupo.titulo), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }), botoesDoFiltro,
     h("div", { class: "cartao" }, tabela(["Nome", "Situação", "Ações"], linhas)));
 }
 
@@ -1922,7 +1952,10 @@ async function telaGrupo(id, sub = "", aviso = "", procurar) {
   if (r.status !== 200) return telaFalhou("Conteúdo do site", r);
   const grupo = r.dados.grupos.find((g) => g.id === id);
   if (!grupo) return ir("conteudo");
-  if (grupo.campos.length === 1 && grupo.campos[0].tipo === "campanhas") return sub ? telaCampanha(grupo, sub, aviso, procurar) : telaListaCampanhas(grupo, aviso);
+  if (grupo.campos.length === 1 && grupo.campos[0].tipo === "campanhas") {
+    return sub ? telaCampanha(grupo, sub, aviso, procurar) : telaListaCampanhas(grupo, aviso, r.dados.grupos.filter((g) => g.dentroDe === grupo.id));
+  }
+  if (grupo.dentroDe) grupo.tituloDeFora = r.dados.grupos.find((g) => g.id === grupo.dentroDe)?.titulo;
   const porItem = grupo.campos.length > 0 && grupo.campos.every((c) => c.item);
   if (porItem && !sub) return telaListaItens(grupo);
   const doGrupo = porItem ? grupo.campos.filter((c) => c.item === sub) : grupo.campos;
@@ -2537,6 +2570,12 @@ async function telaAvisos() {
 }
 
 // ---------- medidor (administradora) ----------
+// Última leitura da vigia semanal (página de créditos da Netlify, pedido de 28/10).
+const numBR = (v) => Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+const cartaoNetlify = (n) => h("div", { class: "miudo" },
+  h("p", { text: `Última leitura da Netlify (vigia semanal): ${quando(n.em)}` }),
+  h("p", { text: `Usados no mês: ${numBR(n.usados)} · disponíveis: ${numBR(n.disponiveis)}` }),
+  h("p", { text: `Visitas: ${numBR(n.visitas.creditos)} · fotos e vídeos: ${numBR(n.transferencia)} · publicações: ${n.publicacoes} (${numBR(n.creditosPublicacoes)} créditos)` }));
 async function telaMedidor() {
   if (eu.papel !== "admin") return ir("");
   const r = await pedir("cota");
@@ -2562,6 +2601,7 @@ async function telaMedidor() {
     h("div", { class: "cartao" }, h("p", { text: c.texto }),
       c.leitura && h("p", { class: "miudo", text: `Última leitura: ${c.leitura.creditosUsados} créditos em ${quando(c.leitura.em)}` }),
       c.previstoSemPublicar !== null && c.previstoSemPublicar !== undefined && h("p", { class: "miudo", text: `Previsão do mês sem publicações: ${c.previstoSemPublicar} créditos` }),
+      c.netlify && cartaoNetlify(c.netlify),
       leitura.el, bLeitura, h("hr"), cota.el, bCota, h("hr"), bFora, msg));
 }
 

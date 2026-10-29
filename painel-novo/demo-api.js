@@ -24,7 +24,23 @@
     const site = Object.fromEntries(Object.entries(E.site).filter(([k]) => EDITAVEIS.has(k)));
     try { localStorage.setItem(CHAVE, JSON.stringify({ ...E, site })); } catch { /* sem espaço */ }
   };
-  window.recomecarDemo = () => { E = novo(); guardar(); location.hash = ""; location.reload(); };
+  window.recomecarDemo = () => { E = novo(); guardar(); try { localStorage.removeItem(CHAVE_FOTOS); } catch { /* */ } location.hash = ""; location.reload(); };
+
+  // Fotos enviadas na demonstração (29/10): ficam neste aparelho, em "data:", e aparecem no painel e na prévia.
+  const CHAVE_FOTOS = "painel-brumar-demo-fotos-v1";
+  let FOTOS = {};
+  try { FOTOS = JSON.parse(localStorage.getItem(CHAVE_FOTOS)) || {}; } catch { FOTOS = {}; }
+  window.demoFotoDe = (v) => (String(v).startsWith("foto:") && FOTOS[String(v).slice(5)]) || null;
+  // A prévia do site com o molde de verdade (29/10): o molde escreve endereços a partir da raiz ("/arquivos/..."); na
+  // demonstração eles ficam em <raiz>site/. As fotos novas ("/painel/api/foto?id=...") viram a foto guardada aqui.
+  window.demoNaRaiz = (html) => {
+    const raiz = window.DEMO_RAIZ || "/";
+    const naDemo = (caminho) => (caminho.startsWith(raiz) ? caminho : `${raiz}site${caminho}`);
+    return String(html)
+      .replace(/\/painel\/api\/foto\?id=([0-9a-f]{64}\.(?:webp|jpg|png))/g, (x, id) => FOTOS[id] || x)
+      .replace(/(\s(?:src|href|poster|content)=")(\/(?!\/)[^"]*)"/g, (x, antes, caminho) => `${antes}${naDemo(caminho)}"`)
+      .replace(/url\((["']?)(\/(?!\/)[^"')]*)/g, (x, aspa, caminho) => `url(${aspa}${naDemo(caminho)}`);
+  };
 
   const EU = { nome: "Bruna", email: "bruna@exemplo.com", papel: "responsavel" };
   const ok = (dados, status = 200) => new Response(JSON.stringify(dados), { status, headers: { "Content-Type": "application/json" } });
@@ -75,6 +91,8 @@
       }
     }
     if (r.tipo === "lista-de-textos") return listaDeTextos(valor, r, n, proibida).erro || null;
+    // WhatsApp (29/10), como o servidor: DDD + número, guardado só com números e o 55.
+    if (r.tipo === "whatsapp" && !whatsapp(valor)) return `${n}: escreva o DDD e o número, como (64) 99319-2101.`;
     // Vídeos: no máximo "max" e capa nova só JPEG ("foto:<id>.jpg"), com as mesmas mensagens do servidor
     // (lib/regras.mjs; achado 3 do chat do site, 26/10). A capa que já está no site ("/...") continua aceita.
     if (r.tipo === "videos") {
@@ -88,6 +106,13 @@
     }
     return null;
   }
+
+  const whatsapp = (v) => {
+    if (typeof v !== "string") return null;
+    let d = v.replace(/\D/g, "");
+    if (d.length === 10 || d.length === 11) d = `55${d}`;
+    return /^55[1-9]{2}\d{8,9}$/.test(d) ? d : null;
+  };
 
   // Lista de frases (contrato C1), igual ao servidor (lib/esquema.mjs, mesmas mensagens): quebra de linha vira
   // espaço, tira os espaços das pontas, descarta frase vazia, recusa "<" e ">", frase acima de max-letras, palavra
@@ -147,7 +172,7 @@
           nome: item ? `${r.nome} · ${item}` : r.nome, noSite: ler(E.site[arq(caminho)], lugar(caminho)),
           ...(rasc && { rascunho: { valor: rasc.valor, por: rasc.por, em: rasc.em } }), _o: [fonte ? fontes.indexOf(fonte) : -1, ordem, pos] };
       }).sort((a, b) => a._o[0] - b._o[0] || a._o[1] - b._o[1] || a._o[2] - b._o[2]).map(({ _o, ...c }) => c);
-      return { id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "", ...(g.filtros && { filtros: g.filtros }), campos };
+      return { id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "", ...(g.filtros && { filtros: g.filtros }), ...(g.dentroDe && { dentroDe: g.dentroDe }), campos };
     });
     return { grupos, publicarLigado: true };
   }
@@ -191,7 +216,7 @@
 
   async function rota(url, metodo, corpo) {
     const caminho = url.pathname.replace(/^.*\/painel\/api\//, "");
-    const dados = corpo ? JSON.parse(corpo) : {};
+    const dados = typeof corpo === "string" ? JSON.parse(corpo) : {};
     switch (caminho) {
       // A mesma "entrada" a cada recarga (como no servidor, que guarda quando ela vence): o "Entendi" da faixa de
       // créditos baixos vale até a próxima entrada.
@@ -219,6 +244,7 @@
             const anterior = E.rascunho[m.caminho];
             const r = ESQUEMA.campos[modeloDe(m.caminho)];
             const valor = r?.tipo === "lista-de-textos" ? listaDeTextos(m.valor, r, r.nome, () => null).valor
+              : r?.tipo === "whatsapp" ? whatsapp(m.valor)
               : typeof m.valor === "string" ? m.valor.trim() : m.valor;
             E.rascunho[m.caminho] = { valor, por: EU.nome, em: agora(),
               ...(anterior && "antes" in anterior ? { antes: anterior.antes } : m.antes !== undefined ? { antes: m.antes } : {}) };
@@ -263,7 +289,17 @@
       case "convites": return ok(metodo === "GET" ? { convites: [] }
         : { id: "demo", link: `${location.origin}${location.pathname}#convite/exemplo-de-convite`, papel: "responsavel", expira: agora() + 1728e5 }, metodo === "POST" ? 201 : 200);
       case "convite": return falha("Esta é só uma demonstração: o convite de verdade funciona no painel no ar.", 410);
-      case "foto": case "video": return falha("Na demonstração não dá para enviar fotos e vídeos. No painel de verdade, funciona.");
+      case "foto": {
+        if (metodo !== "POST" || !(corpo instanceof Blob)) return falha("Na demonstração, isso não está disponível.", 404);
+        const ext = { "image/webp": "webp", "image/jpeg": "jpg", "image/png": "png" }[corpo.type];
+        if (!ext) return falha("Use uma foto JPG, PNG ou WebP.");
+        const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", await corpo.arrayBuffer()));
+        const id = `${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}.${ext}`;
+        FOTOS[id] = await new Promise((pronto) => { const l = new FileReader(); l.onload = () => pronto(l.result); l.readAsDataURL(corpo); });
+        try { localStorage.setItem(CHAVE_FOTOS, JSON.stringify(FOTOS)); } catch { /* sem espaço: a foto vale até recarregar */ }
+        return ok({ valor: `foto:${id}` }, 201);
+      }
+      case "video": return falha("Na demonstração não dá para enviar vídeos. No painel de verdade, funciona.");
       default: return falha("Na demonstração, isso não está disponível.", 404);
     }
   }
@@ -294,7 +330,9 @@
     const url = new URL(typeof entrada === "string" ? entrada : entrada.url, location.href);
     if (!url.pathname.includes("/painel/api/")) return fetchOriginal(entrada, opcoes);
     await new Promise((r) => setTimeout(r, 120)); // parece um servidor de verdade
+    const metodo = (opcoes.method || "GET").toUpperCase();
+    if (url.pathname.endsWith("/painel/api/foto")) return rota(url, metodo, opcoes.body instanceof Blob ? opcoes.body : null);
     const corpo = typeof opcoes.body === "string" ? opcoes.body : null;
-    return rota(url, (opcoes.method || "GET").toUpperCase(), corpo);
+    return rota(url, metodo, corpo);
   };
 })();

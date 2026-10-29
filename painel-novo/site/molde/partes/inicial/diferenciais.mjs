@@ -1,0 +1,16 @@
+// Diferenciais, "A escolha perfeita" (parte fixa do molde, pelo atalho da especificação, ajuste 15): os 10
+// diferenciais, 6 à vista e 4 no "Ver mais benefícios", idênticos ao site de hoje.
+import { h } from "../../html.mjs";
+import { linkDeCompra } from "./comum.mjs";
+
+export default function diferenciais(dados) {
+  return h`<section id="diferenciais">
+<div class="wrap">
+<div class="sec-head"><span class="eyebrow">Por que a Brumar</span><h2>A escolha perfeita</h2><p class="dif-sub">O liso que você ama, <span class="gv">do jeito certo</span></p></div>
+<div class="dif"><div><span class="ib"><svg class="i"><use href="#i-sparkle"/></svg></span><p class="dif-t"><b>Liso com brilho espelhado</b><span class="dif-s">Liso desde a primeira aplicação, com brilho espelhado, maciez e movimento.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-heart"/></svg></span><p class="dif-t"><b>Trata enquanto alisa</b><span class="dif-s">Nutre profundamente e fortalece os fios ao mesmo tempo em que alisa.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-clock"/></svg></span><p class="dif-t"><b>Dura de 3 a 4 meses</b><span class="dif-s">E, a partir da terceira aplicação, o efeito fica definitivo. Depois, é só retocar a raiz.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-wave"/></svg></span><p class="dif-t"><b>Tira o volume e o frizz</b><span class="dif-s">O cabelo fica leve, disciplinado e com movimento, sem armar.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-comb"/></svg></span><p class="dif-t"><b>Para todos os tipos de cabelo</b><span class="dif-s">Do ondulado ao crespo, do castanho ao loiro e ao grisalho.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-bottle"/></svg></span><p class="dif-t"><b>Pode lavar no mesmo dia</b><span class="dif-s">Depois que o cabelo esfriar, já pode lavar, sem esperar dias.</span></p></div></div><div class="dif dif-x" id="dif-x"><div><span class="ib"><svg class="i"><use href="#i-dryer"/></svg></span><p class="dif-t"><b>Sem escova antes, sem calor depois</b><span class="dif-s">Não precisa de escova antes de aplicar nem de secador ou prancha no dia a dia.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-flask"/></svg></span><p class="dif-t"><b>Compatível com outras químicas</b><span class="dif-s">Pode ser usado em cabelos com coloração, mechas e outras químicas. Faça sempre o teste de mecha antes.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-flower"/></svg></span><p class="dif-t"><b>Pode pintar e descolorir depois</b><span class="dif-s">Espere 5 lavagens e, de preferência, faça o protocolo de tratamento antes da coloração.</span></p></div><div><span class="ib"><svg class="i"><use href="#i-users"/></svg></span><p class="dif-t"><b>Para toda a família</b><span class="dif-s">Pode ser usado por mulheres, homens e crianças.</span></p></div></div><button type="button" class="btn ghost more-b" data-more="dif-x" data-label="Ver mais benefícios" aria-expanded="false">Ver mais benefícios</button>
+<div class="sec-cta"><a class="btn buy" href="${linkDeCompra(dados)}">Quero meu Kit Completo</a></div>
+</div>
+</section>
+
+`;
+}

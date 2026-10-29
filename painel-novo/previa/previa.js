@@ -12,8 +12,8 @@
 //   - Texto vindo dos dados nunca vira HTML: prévia simplificada só com textContent; na /bio, os dados vão num JSON
 //     com "<" trocado (não fecha o <script>) e quem desenha é bio/bio-dinamico.js, também com textContent.
 
-export const MOLDE = "/molde/montar.mjs"; // caminho do molde no site novo (combinado na Opção A)
-export const CONTAS = "/molde/contas.mjs"; // contas de preço do molde (precoPix, formatarReais)
+export const MOLDE = "/previa-atualiza-ao-site/painel-novo/site/molde/montar.mjs"; // caminho do molde no site novo (combinado na Opção A)
+export const CONTAS = "/previa-atualiza-ao-site/painel-novo/site/molde/contas.mjs"; // contas de preço do molde (precoPix, formatarReais)
 
 // ---------- foco ----------
 const PEDACO = "[a-z0-9]+(?:-[a-z0-9]+)*";
@@ -83,6 +83,7 @@ function antesDoFim(html, marca, pedaco) {
 
 // Põe o rolar.js no fim da página: ele rola até a parte do foco.
 export function comRolagem(html, base, foco) {
+  html = window.demoNaRaiz ? window.demoNaRaiz(html) : html;
   const f = focoValido(foco);
   if (!f) return html;
   return antesDoFim(String(html), "</body>", `<script src="${atributo(new URL("rolar.js", base).href)}" data-foco="${atributo(f)}"></script>\n`);
