@@ -7,14 +7,27 @@ import { linkDoWhatsapp, numeroEscrito } from "./moldura/comum.mjs";
 
 const CHAVE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-// O WhatsApp das políticas vem do marca.json (29/10: a Bruna troca o número pelo painel e as políticas acompanham):
-// no texto, {{whatsapp-link}} vira o link (https://wa.me/...) e {{whatsapp}} o número escrito, "(64) 99319-2101".
-// Outro {{...}} para a montagem (erro de digitação no texto).
-export function comContato(html, marca, onde) {
-  const trocado = html.replaceAll("{{whatsapp-link}}", linkDoWhatsapp(marca)).replaceAll("{{whatsapp}}", numeroEscrito(marca));
-  const sobra = /\{\{[^}]*\}\}/.exec(trocado);
-  if (sobra) throw new Error(`${onde}: marca desconhecida no texto (${sobra[0]}); use {{whatsapp}} ou {{whatsapp-link}}`);
-  return trocado;
+// O atendimento das políticas vem do mesmo lugar que o rodapé (29/10: a Bruna muda pelo painel, na aba Atendimento, e
+// as políticas acompanham). No texto: {{whatsapp-link}} (https://wa.me/...), {{whatsapp}} ("(64) 99319-2101"),
+// {{email}}, {{instagram}} ("@perfil") e {{horario}} ("segunda a sexta, das 8h às 17h, e sábado, das 8h às 12h", do
+// textos.horario). Outra {{...}} para a montagem (erro de digitação no texto).
+export function horarioEscrito(horario) {
+  const partes = String(horario ?? "").split(" · ").map((p) => p.trim()).filter(Boolean).map((p) => p.slice(0, 1).toLowerCase() + p.slice(1));
+  return partes.length > 1 ? `${partes.slice(0, -1).join(", ")}, e ${partes.at(-1)}` : partes.join("");
+}
+const perfil = (link) => `@${String(link ?? "").replace(/\/+$/, "").split("/").pop()}`;
+export function comContato(html, dados, onde) {
+  const { marca, textos } = dados;
+  const trocas = {
+    "whatsapp-link": () => linkDoWhatsapp(marca), whatsapp: () => numeroEscrito(marca), email: () => marca.email,
+    instagram: () => perfil(marca.redes?.instagram), horario: () => horarioEscrito(textos?.horario),
+  };
+  return html.replace(/\{\{([^}]*)\}\}/g, (marcaNoTexto, nome) => {
+    if (!Object.hasOwn(trocas, nome)) throw new Error(`${onde}: marca desconhecida no texto (${marcaNoTexto}); use ${Object.keys(trocas).map((k) => `{{${k}}}`).join(", ")}`);
+    const valor = String(trocas[nome]() ?? "");
+    if (!valor || valor === "@") throw new Error(`${onde}: ${marcaNoTexto} sem valor (marca.json ou textos.json)`);
+    return valor;
+  });
 }
 
 // "2026-10-21" -> "21/10/2026". Data mal escrita para a montagem.
@@ -40,7 +53,7 @@ export function politicasConferidas(dados) {
       throw new Error(`${onde}: endereço da página própria não permitido (${pagina})`);
     }
     return { chave, titulo: p.titulo, atualizacao: p.atualizacao, data: dataEscrita(p.atualizacao, onde), pagina,
-      html: cru(conferirHtmlDaPolitica(comContato(String(p.html ?? ""), dados.marca, onde), `política ${chave}`)) };
+      html: cru(conferirHtmlDaPolitica(comContato(String(p.html ?? ""), dados, onde), `política ${chave}`)) };
   });
 }
 

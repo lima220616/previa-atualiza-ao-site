@@ -10,7 +10,7 @@ import { h, cru } from "../../html.mjs";
 import { secaoLigada } from "./comum.mjs";
 
 // Os grupos do foco (os mesmos do esquema do painel e do rolar.js dele).
-export const GRUPOS_DO_FOCO = ["textos", "whatsapp", "campanhas", "banners", "secoes", "produtos", "kits", "faq", "videos", "fotos", "resultados",
+export const GRUPOS_DO_FOCO = ["textos", "atendimento", "campanhas", "banners", "secoes", "produtos", "kits", "faq", "videos", "fotos", "resultados",
   "videos-por-produto", "fotos-por-produto", "bio"];
 const PEDACO = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

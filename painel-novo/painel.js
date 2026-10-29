@@ -44,6 +44,9 @@ function whatsappEscrito(v) {
   return n.length >= 10 ? `(${n.slice(0, 2)}) ${n.slice(2, -4)}-${n.slice(-4)}` : String(v ?? "");
 }
 
+// Instagram como a pessoa escreve: "https://www.instagram.com/perfil" -> "@perfil".
+const instagramEscrito = (v) => (v ? `@${String(v).replace(/\/+$/, "").split("/").pop()}` : "");
+
 // Valor simples (texto, link, data, escolha, ligado) como a pessoa entende: rótulo da escolha, data brasileira,
 // "Ligado"/"Desligado". Nunca o código cru ("nevoa", "2026-11-30T23:59"; item 60).
 function textoSimples(v, regra) {
@@ -54,6 +57,7 @@ function textoSimples(v, regra) {
   if (tipo === "ligado") return v === true ? "Ligado" : v === false ? "Desligado" : String(v);
   if (tipo === "data") return dataBR(v);
   if (tipo === "whatsapp") return whatsappEscrito(v);
+  if (tipo === "instagram") return instagramEscrito(v);
   if (typeof v === "object") return "(conteúdo que o painel não sabe mostrar)";
   return String(v);
 }
@@ -1700,7 +1704,23 @@ function entradaDoCampo(c, valor, aoMudar) {
     return { el: h("div", { class: "whatsapp" }, entrada, testar), ler: () => entrada.value, foco: entrada,
       mudou: () => digitos() !== String(valor ?? ""), definir: (v) => { entrada.value = whatsappEscrito(v); ajustar(); } };
   }
+  if (c.tipo === "instagram") {
+    // Mostra "@perfil"; o servidor guarda o link do perfil. "Abrir" confere se é o perfil certo.
+    const entrada = h("input", { type: "text", autocomplete: "off", autocapitalize: "none", placeholder: "@seuperfil", maxlength: 120 });
+    entrada.value = instagramEscrito(valor);
+    const inicial = entrada.value;
+    const abrir = h("a", { class: "botao claro", target: "_blank", rel: "noopener", text: "Abrir no Instagram" });
+    const ajustar = () => {
+      const m = /^@?([A-Za-z0-9._]{1,30})$/.exec(entrada.value.trim()) || /instagram\.com\/([A-Za-z0-9._]{1,30})/.exec(entrada.value);
+      if (m) abrir.href = `https://www.instagram.com/${m[1].toLowerCase()}`; else abrir.removeAttribute("href");
+    };
+    ajustar();
+    entrada.addEventListener("input", () => { ajustar(); aoMudar?.(); });
+    return { el: h("div", { class: "whatsapp" }, entrada, abrir), ler: () => entrada.value, foco: entrada,
+      mudou: () => entrada.value.trim() !== inicial, definir: (v) => { entrada.value = instagramEscrito(v); ajustar(); } };
+  }
   const props = c.tipo === "data" ? { type: "datetime-local" }
+    : c.tipo === "email" ? { type: "email", inputmode: "email", autocomplete: "off", placeholder: "seuemail@exemplo.com" }
     : c.tipo === "link" ? { type: "url", inputmode: "url", placeholder: "https://… ou um atalho do site, como /loja/" } : {};
   const grande = c.tipo === "texto" && c.max > 100;
   const entrada = h(grande ? "textarea" : "input", { ...(grande ? {} : { type: "text", ...props }), maxlength: c.max });
@@ -1782,14 +1802,24 @@ const listaDoCampo = (campo) => {
 // Aviso no alto da tela que acabou de ser desenhada de novo (ex.: "Outra pessoa mudou isto agora há pouco").
 const avisoNoAlto = (aviso) => aviso && h("p", { class: "erro", role: "alert", text: aviso });
 
-// "dentro": os grupos que abrem por um botão nesta tela (29/10: os Banners do topo, que são banners de campanha).
+// Grupo com outros "dentro" dele (29/10, pedido da dona: "igual Produtos e kits"): no alto, um botão para cada um
+// ("Campanhas (1) | Banners (4)"), com o nomeCurto e quantos itens tem. O verde é a tela aberta.
+const itensDoGrupo = (g) => (g.campos.length === 1 && g.campos[0].tipo === "campanhas" ? listaDoCampo(g.campos[0]).length
+  : new Set(g.campos.map((c) => c.item)).size);
+function botoesDosGrupos(fora, dentro, aberto) {
+  if (!fora || !dentro.length) return null;
+  return h("div", { class: "botoes filtros", role: "group", "aria-label": `Mostrar em ${fora.titulo}` }, [fora, ...dentro].map((g) => {
+    const salvos = g.campos.filter((c) => c.rascunho).length;
+    return h("button", { class: g.id === aberto ? "botao verde" : "botao claro", type: "button", "aria-pressed": String(g.id === aberto),
+      onclick: () => { if (g.id !== aberto) ir(`conteudo/${g.id}`); } },
+    `${g.nomeCurto || g.titulo} (${itensDoGrupo(g)})${salvos ? " ●" : ""}`);
+  }));
+}
+
+// "dentro": os grupos que abrem pelos botões no alto desta tela (29/10: os Banners do topo).
 async function telaListaCampanhas(grupo, aviso = "", dentro = []) {
   const campo = grupo.campos[0];
-  const botoesDeDentro = dentro.length > 0 && h("div", { class: "botoes" }, dentro.map((g) => {
-    const salvos = g.campos.filter((c) => c.rascunho).length;
-    return h("button", { class: "botao claro", type: "button", onclick: () => ir(`conteudo/${g.id}`) },
-      `${g.icone || "🖼️"} ${g.titulo}${salvos ? ` · ${salvos} mudança(s) salva(s)` : ""}`);
-  }));
+  const botoesDeDentro = botoesDosGrupos(grupo, dentro, grupo.id);
   const lista = listaDoCampo(campo);
   const msg = h("p", { class: "erro" });
   const max = campo.max || 6;
@@ -1821,9 +1851,8 @@ async function telaListaCampanhas(grupo, aviso = "", dentro = []) {
     atualizarPrevia();
     telaGrupo(grupo.id);
   } }, "Voltar ao que está no site");
-  await casca(cabecalhoLista(grupo.titulo, adicionar), avisoNoAlto(aviso),
+  await casca(cabecalhoLista(grupo.titulo, adicionar), avisoNoAlto(aviso), botoesDeDentro,
     h("p", { class: "sub", text: "O site mostra uma contagem só: a da campanha ligada que termina primeiro. Quando ela acaba, entra a próxima." }),
-    botoesDeDentro,
     h("div", { class: "cartao" },
       lista.length ? tabela(["Campanha", "Termina", "Situação", "Ações"], linhas) : h("p", { text: "Nenhuma campanha cadastrada. Toque em \"+ Adicionar\"." }),
       campo.rascunho && h("p", { class: "miudo", text: `Mudanças salvas por ${campo.rascunho.por} em ${quando(campo.rascunho.em)}, ainda não publicadas.` }),
@@ -1939,8 +1968,10 @@ async function telaListaItens(grupo) {
       h("td", {}, situacao),
       h("td", { class: "acoes" }, h("button", { class: "acao", type: "button", "aria-label": `Editar ${it.nome}`, onclick: () => ir(`conteudo/${grupo.id}/${it.chave}`) }, "✏️ Editar")));
   });
-  const voltarParaFora = grupo.dentroDe && h("button", { class: "voltar", type: "button", onclick: () => ir(`conteudo/${grupo.dentroDe}`) }, `‹ ${grupo.tituloDeFora || "Voltar"}`);
-  await casca(voltarParaFora, cabecalhoLista(grupo.titulo), grupo.descricao && h("p", { class: "sub", text: grupo.descricao }), botoesDoFiltro,
+  // Grupo de dentro (Banners): o título do de fora ("Campanhas e banners") e os botões "Campanhas | Banners".
+  const fora = grupo.dentroDe && grupo.gruposDeFora?.fora;
+  await casca(cabecalhoLista(fora ? fora.titulo : grupo.titulo), fora && botoesDosGrupos(fora, grupo.gruposDeFora.dentro, grupo.id),
+    grupo.descricao && h("p", { class: "sub", text: grupo.descricao }), botoesDoFiltro,
     h("div", { class: "cartao" }, tabela(["Nome", "Situação", "Ações"], linhas)));
 }
 
@@ -1955,7 +1986,11 @@ async function telaGrupo(id, sub = "", aviso = "", procurar) {
   if (grupo.campos.length === 1 && grupo.campos[0].tipo === "campanhas") {
     return sub ? telaCampanha(grupo, sub, aviso, procurar) : telaListaCampanhas(grupo, aviso, r.dados.grupos.filter((g) => g.dentroDe === grupo.id));
   }
-  if (grupo.dentroDe) grupo.tituloDeFora = r.dados.grupos.find((g) => g.id === grupo.dentroDe)?.titulo;
+  if (grupo.dentroDe) {
+    const fora = r.dados.grupos.find((g) => g.id === grupo.dentroDe);
+    grupo.tituloDeFora = fora?.titulo;
+    grupo.gruposDeFora = fora && { fora, dentro: r.dados.grupos.filter((g) => g.dentroDe === fora.id) };
+  }
   const porItem = grupo.campos.length > 0 && grupo.campos.every((c) => c.item);
   if (porItem && !sub) return telaListaItens(grupo);
   const doGrupo = porItem ? grupo.campos.filter((c) => c.item === sub) : grupo.campos;

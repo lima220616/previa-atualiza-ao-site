@@ -93,6 +93,8 @@
     if (r.tipo === "lista-de-textos") return listaDeTextos(valor, r, n, proibida).erro || null;
     // WhatsApp (29/10), como o servidor: DDD + número, guardado só com números e o 55.
     if (r.tipo === "whatsapp" && !whatsapp(valor)) return `${n}: escreva o DDD e o número, como (64) 99319-2101.`;
+    if (r.tipo === "email" && !email(valor)) return `${n}: escreva um e-mail completo, como contato@sualoja.com.`;
+    if (r.tipo === "instagram" && !instagram(valor)) return `${n}: escreva o @ do perfil (ex.: @brumarcosmeticosoficial) ou cole o link do Instagram.`;
     // Vídeos: no máximo "max" e capa nova só JPEG ("foto:<id>.jpg"), com as mesmas mensagens do servidor
     // (lib/regras.mjs; achado 3 do chat do site, 26/10). A capa que já está no site ("/...") continua aceita.
     if (r.tipo === "videos") {
@@ -112,6 +114,16 @@
     let d = v.replace(/\D/g, "");
     if (d.length === 10 || d.length === 11) d = `55${d}`;
     return /^55[1-9]{2}\d{8,9}$/.test(d) ? d : null;
+  };
+  // E-mail e Instagram (29/10), como o servidor (lib/regras.mjs).
+  const email = (v) => {
+    const e = typeof v === "string" ? v.trim().toLowerCase() : "";
+    return e.length <= 120 && /^[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(e) ? e : null;
+  };
+  const instagram = (v) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    const m = /^(?:https?:\/\/)?(?:www\.)?instagram\.com\/([A-Za-z0-9._]{1,30})\/?(?:\?.*)?$/.exec(s) || /^@?([A-Za-z0-9._]{1,30})$/.exec(s);
+    return m ? `https://www.instagram.com/${m[1].toLowerCase()}` : null;
   };
 
   // Lista de frases (contrato C1), igual ao servidor (lib/esquema.mjs, mesmas mensagens): quebra de linha vira
@@ -172,7 +184,7 @@
           nome: item ? `${r.nome} · ${item}` : r.nome, noSite: ler(E.site[arq(caminho)], lugar(caminho)),
           ...(rasc && { rascunho: { valor: rasc.valor, por: rasc.por, em: rasc.em } }), _o: [fonte ? fontes.indexOf(fonte) : -1, ordem, pos] };
       }).sort((a, b) => a._o[0] - b._o[0] || a._o[1] - b._o[1] || a._o[2] - b._o[2]).map(({ _o, ...c }) => c);
-      return { id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "", ...(g.filtros && { filtros: g.filtros }), ...(g.dentroDe && { dentroDe: g.dentroDe }), campos };
+      return { id: g.id, titulo: g.titulo, descricao: g.descricao || "", icone: g.icone || "", ...(g.filtros && { filtros: g.filtros }), ...(g.dentroDe && { dentroDe: g.dentroDe }), ...(g.nomeCurto && { nomeCurto: g.nomeCurto }), campos };
     });
     return { grupos, publicarLigado: true };
   }
@@ -244,7 +256,7 @@
             const anterior = E.rascunho[m.caminho];
             const r = ESQUEMA.campos[modeloDe(m.caminho)];
             const valor = r?.tipo === "lista-de-textos" ? listaDeTextos(m.valor, r, r.nome, () => null).valor
-              : r?.tipo === "whatsapp" ? whatsapp(m.valor)
+              : r?.tipo === "whatsapp" ? whatsapp(m.valor) : r?.tipo === "email" ? email(m.valor) : r?.tipo === "instagram" ? instagram(m.valor)
               : typeof m.valor === "string" ? m.valor.trim() : m.valor;
             E.rascunho[m.caminho] = { valor, por: EU.nome, em: agora(),
               ...(anterior && "antes" in anterior ? { antes: anterior.antes } : m.antes !== undefined ? { antes: m.antes } : {}) };
