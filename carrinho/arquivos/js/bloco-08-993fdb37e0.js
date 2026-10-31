@@ -1,0 +1,1 @@
+(function(){document.querySelectorAll('[data-goto-proto]').forEach(function(a){a.addEventListener('click',function(){setTimeout(function(){var t=document.querySelector('#p-gloss .proto');if(t){var y=t.getBoundingClientRect().top+window.scrollY-90;window.scrollTo({top:y,behavior:'smooth'})}},350)})})})();
